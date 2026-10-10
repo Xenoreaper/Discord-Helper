@@ -102,6 +102,9 @@ def build_settings_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Emb
     else:
         value = "none — create one in the Role menus panel"
     embed.add_field(name="Role menus", value=value, inline=False)
+    easter_eggs = config.get("easter_eggs", {})
+    easter_enabled = easter_eggs.get("enabled", True)
+    embed.add_field(name="Easter eggs", value="on" if easter_enabled else "off", inline=False)
     embed.set_footer(text="Manage role menus in the dedicated panel. Dismiss this message when done.")
     return embed
 
@@ -265,7 +268,7 @@ class _BackToSettingsButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.edit_message(
             embed=build_settings_embed(self.bot, interaction.guild),
-            view=SettingsPanelView(self.bot),
+            view=SettingsPanelView(self.bot, interaction.guild),
         )
 
 
@@ -733,7 +736,7 @@ class MenuPanelView(discord.ui.View):
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.edit_message(
             embed=build_settings_embed(self.bot, self.guild),
-            view=SettingsPanelView(self.bot),
+            view=SettingsPanelView(self.bot, self.guild),
         )
 
 
@@ -834,14 +837,36 @@ class ClearPanelView(discord.ui.View):
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.edit_message(
             embed=build_settings_embed(self.bot, interaction.guild),
-            view=SettingsPanelView(self.bot),
+            view=SettingsPanelView(self.bot, interaction.guild),
         )
 
 
+class _EasterEggsToggleButton(discord.ui.Button):
+    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
+        enabled = bool((bot.guild_config(guild.id).get("easter_eggs") or {}).get("enabled", True))
+        super().__init__(
+            label=f"Easter eggs: {'on' if enabled else 'off'}",
+            style=discord.ButtonStyle.success if enabled else discord.ButtonStyle.secondary,
+            row=3,
+        )
+        self.bot = bot
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        easter_eggs = self.bot.guild_config(interaction.guild.id).setdefault("easter_eggs", {})
+        easter_eggs["enabled"] = not bool(easter_eggs.get("enabled", True))
+        saved = self.bot.save_config()
+        embed = build_settings_embed(self.bot, interaction.guild)
+        if not saved:
+            embed.add_field(name="Warning", value=_SAVE_FAILED, inline=False)
+        await interaction.response.edit_message(embed=embed, view=SettingsPanelView(self.bot, interaction.guild))
+
+
 class SettingsPanelView(discord.ui.View):
-    def __init__(self, bot: commands.Bot) -> None:
+    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
         super().__init__(timeout=900)
         self.bot = bot
+        self.guild = guild
+        self.add_item(_EasterEggsToggleButton(bot, guild))
 
     async def _refresh(self, interaction: discord.Interaction, saved: bool = True) -> None:
         embed = build_settings_embed(self.bot, interaction.guild)
@@ -999,7 +1024,7 @@ class RolesPanelView(discord.ui.View):
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.edit_message(
             embed=build_settings_embed(self.bot, self.guild),
-            view=SettingsPanelView(self.bot),
+            view=SettingsPanelView(self.bot, self.guild),
         )
 
 
@@ -1030,7 +1055,7 @@ class Settings(commands.Cog):
             return
         await interaction.response.send_message(
             embed=build_settings_embed(self.bot, interaction.guild),
-            view=SettingsPanelView(self.bot),
+            view=SettingsPanelView(self.bot, interaction.guild),
             ephemeral=True,
         )
 

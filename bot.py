@@ -26,6 +26,7 @@ def default_guild_config() -> dict:
         "admin_roles": [],
         "join": {"base_role_id": None, "invites": {}},
         "role_menus": [],
+        "easter_eggs": {},
     }
 
 
@@ -100,6 +101,8 @@ def validate_config(config: dict) -> None:
 
     _migrate_role_menu(config)
 
+    _validate_easter_eggs(config)
+
     menus = config.setdefault("role_menus", [])
     if not isinstance(menus, list):
         raise SystemExit('config.json "role_menus" must be a list.')
@@ -136,6 +139,18 @@ def validate_config(config: dict) -> None:
         _validate_roles(roles, f"role_menus[{i}].roles")
 
 
+def _validate_easter_eggs(config: dict) -> None:
+    easter_eggs = config.setdefault("easter_eggs", {})
+    if not isinstance(easter_eggs, dict):
+        raise SystemExit('config.json "easter_eggs" must be an object.')
+    gif_url = easter_eggs.get("hello_there_gif")
+    if gif_url not in (None, "") and not isinstance(gif_url, str):
+        raise SystemExit('config.json "easter_eggs.hello_there_gif" must be a string URL or null.')
+    enabled = easter_eggs.get("enabled")
+    if enabled is not None and not isinstance(enabled, bool):
+        raise SystemExit('config.json "easter_eggs.enabled" must be a boolean or null.')
+
+
 def _migrate_legacy(store: dict) -> None:
     if "guild_id" not in store:
         return
@@ -166,6 +181,7 @@ class RoleBot(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents.default()
         intents.members = True
+        intents.message_content = True
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.store = ConfigStore(BASE_DIR / "config.json")
         validate_store(self.store.data)
@@ -190,7 +206,7 @@ class RoleBot(commands.Bot):
         return True
 
     async def setup_hook(self) -> None:
-        for extension in ("cogs.reaction_roles", "cogs.join_roles", "cogs.guard", "cogs.settings"):
+        for extension in ("cogs.reaction_roles", "cogs.join_roles", "cogs.guard", "cogs.settings", "cogs.easter_eggs"):
             await self.load_extension(extension)
 
         await self.tree.sync()
