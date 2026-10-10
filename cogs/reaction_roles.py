@@ -16,8 +16,14 @@ def build_embed(bot: commands.Bot, menu_spec: dict) -> discord.Embed:
     return embed
 
 
-def _build_buttons(bot: commands.Bot, menu_spec: dict) -> list["RoleButton"]:
-    guild = bot.get_guild(int(bot.config["guild_id"]))
+def _menu_guild(bot: commands.Bot, menu_spec: dict) -> discord.Guild | None:
+    guild_id = menu_spec.get("guild_id")
+    if not guild_id:
+        return None
+    return bot.get_guild(int(guild_id))
+
+
+def _build_buttons(bot: commands.Bot, menu_spec: dict, guild: discord.Guild | None) -> list["RoleButton"]:
     buttons: list[RoleButton] = []
     for role_spec in menu_spec.get("roles", []):
         role = guild.get_role(int(role_spec["role_id"])) if guild else None
@@ -83,26 +89,32 @@ class RoleMenuView(discord.ui.View):
     def __init__(self, bot: commands.Bot, menu_spec: dict) -> None:
         super().__init__(timeout=None)
         self.menu_id = menu_spec["id"]
-        for button in _build_buttons(bot, menu_spec):
+        self.guild_id = str(menu_spec.get("guild_id") or "")
+        for button in _build_buttons(bot, menu_spec, _menu_guild(bot, menu_spec)):
             self.add_item(button)
 
 
 class ReactionRoles(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
-        self.views: dict[str, RoleMenuView] = {}
+        self.views: dict[tuple[str, str], RoleMenuView] = {}
         self.rebuild_views()
+
+    def _menu_key(self, menu: dict) -> tuple[str, str]:
+        return (str(menu.get("guild_id") or ""), menu["id"])
 
     def rebuild_views(self) -> None:
         self.views = {}
-        for menu in self.bot.config.get("role_menus", []):
-            view = RoleMenuView(self.bot, menu)
-            self.views[menu["id"]] = view
-            message_id = menu.get("message_id")
-            self.bot.add_view(view, message_id=int(message_id) if message_id else None)
+        for guild_id, config in self.bot.configs.items():
+            for menu in config.get("role_menus", []):
+                menu.setdefault("guild_id", str(guild_id))
+                view = RoleMenuView(self.bot, menu)
+                self.views[self._menu_key(menu)] = view
+                message_id = menu.get("message_id")
+                self.bot.add_view(view, message_id=int(message_id) if message_id else None)
 
     def _menu_channel(self, menu: dict) -> tuple[discord.TextChannel | None, str]:
-        guild = self.bot.get_guild(int(self.bot.config["guild_id"]))
+        guild = _menu_guild(self.bot, menu)
         if guild is None or not menu.get("channel_id"):
             return None, "no channel is set for this menu"
         channel = guild.get_channel(int(menu["channel_id"]))
@@ -120,7 +132,7 @@ class ReactionRoles(commands.Cog):
             return False, reason
 
         embed = build_embed(self.bot, menu)
-        view = self.views.get(menu["id"]) or RoleMenuView(self.bot, menu)
+        view = self.views.get(self._menu_key(menu)) or RoleMenuView(self.bot, menu)
         message_id = menu.get("message_id")
         if message_id:
             try:
@@ -141,7 +153,7 @@ class ReactionRoles(commands.Cog):
         return True, "posted"
 
     async def move_menu(self, menu: dict, channel_id: int) -> tuple[bool, str]:
-        guild = self.bot.get_guild(int(self.bot.config["guild_id"]))
+        guild = _menu_guild(self.bot, menu)
         old_channel = None
         if guild is not None and menu.get("channel_id"):
             old_channel = guild.get_channel(int(menu["channel_id"]))
@@ -158,9 +170,13 @@ class ReactionRoles(commands.Cog):
         self.bot.save_config()
         return await self.refresh_menu(menu)
 
-    async def refresh_all(self) -> tuple[int, int]:
+    async def refresh_all(self, guild: discord.Guild | None = None) -> tuple[int, int]:
+        if guild is not None:
+            menus = self.bot.guild_config(guild.id).get("role_menus", [])
+        else:
+            menus = [menu for config in self.bot.configs.values() for menu in config.get("role_menus", [])]
         posted = failed = 0
-        for menu in self.bot.config.get("role_menus", []):
+        for menu in menus:
             ok, _ = await self.refresh_menu(menu)
             if ok:
                 posted += 1
@@ -189,7 +205,8 @@ class ReactionRoles(commands.Cog):
                 await old.delete()
             except discord.HTTPException:
                 pass
-        self.bot.config["role_menus"].remove(menu)
+        config = self.bot.guild_config(menu.get("guild_id"))
+        config["role_menus"].remove(menu)
         self.bot.save_config()
         self.rebuild_views()
 

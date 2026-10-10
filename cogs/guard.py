@@ -12,8 +12,11 @@ class MessageGuard(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
-        kick_channel_id = self.bot.config.get("kick_channel_id")
-        if message.guild is None or not kick_channel_id:
+        if message.guild is None:
+            return
+        guild_config = self.bot.guild_config(message.guild.id)
+        kick_channel_id = guild_config.get("kick_channel_id")
+        if not kick_channel_id:
             return
         if message.channel.id != int(kick_channel_id):
             return
@@ -27,6 +30,10 @@ class MessageGuard(commands.Cog):
 
         perms = author.guild_permissions
         if perms.administrator or perms.manage_messages or perms.kick_members:
+            return
+
+        exempt_roles = guild_config.get("kick_exempt_roles", []) + guild_config.get("admin_roles", [])
+        if any(author.get_role(int(role_id)) is not None for role_id in exempt_roles or []):
             return
 
         try:
@@ -56,7 +63,7 @@ class MessageGuard(commands.Cog):
     async def _log_kick(
         self, message: discord.Message, author: discord.Member, reason: str, success: bool, error: str | None = None
     ) -> None:
-        log_channel_id = self.bot.config.get("log_channel_id")
+        log_channel_id = self.bot.guild_config(message.guild.id).get("log_channel_id")
         if not log_channel_id:
             return
         channel = self.bot.get_channel(int(log_channel_id))

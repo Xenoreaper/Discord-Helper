@@ -18,6 +18,17 @@ def _is_id(value) -> bool:
     return value not in (None, "") and str(value).isdigit()
 
 
+def default_guild_config() -> dict:
+    return {
+        "kick_channel_id": None,
+        "log_channel_id": None,
+        "kick_exempt_roles": [],
+        "admin_roles": [],
+        "join": {"base_role_id": None, "invites": {}},
+        "role_menus": [],
+    }
+
+
 def _migrate_role_menu(config: dict) -> None:
     if "role_menu" not in config:
         return
@@ -50,13 +61,24 @@ def _validate_roles(roles, path: str) -> None:
 
 
 def validate_config(config: dict) -> None:
-    if not _is_id(config.get("guild_id")):
-        raise SystemExit('config.json "guild_id" must be a numeric Discord ID.')
-
     for key in ("kick_channel_id", "log_channel_id"):
         value = config.get(key)
         if value not in (None, "") and not _is_id(value):
             raise SystemExit(f'config.json "{key}" must be a numeric channel ID or null.')
+
+    exempt_roles = config.setdefault("kick_exempt_roles", [])
+    if not isinstance(exempt_roles, list):
+        raise SystemExit('config.json "kick_exempt_roles" must be a list of role IDs.')
+    for i, role_id in enumerate(exempt_roles):
+        if not _is_id(role_id):
+            raise SystemExit(f'config.json "kick_exempt_roles[{i}]" must be a numeric role ID or null.')
+
+    admin_roles = config.setdefault("admin_roles", [])
+    if not isinstance(admin_roles, list):
+        raise SystemExit('config.json "admin_roles" must be a list of role IDs.')
+    for i, role_id in enumerate(admin_roles):
+        if not _is_id(role_id):
+            raise SystemExit(f'config.json "admin_roles[{i}]" must be a numeric role ID or null.')
 
     join = config.setdefault("join", {})
     if not _is_id(join.get("base_role_id")) and join.get("base_role_id") not in (None, ""):
@@ -85,6 +107,7 @@ def validate_config(config: dict) -> None:
     for i, menu in enumerate(menus):
         if not isinstance(menu, dict):
             raise SystemExit(f'config.json "role_menus[{i}]" must be an object.')
+        menu.setdefault("guild_id", None)
         menu_id = menu.get("id")
         if not isinstance(menu_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", menu_id):
             raise SystemExit(
@@ -113,14 +136,47 @@ def validate_config(config: dict) -> None:
         _validate_roles(roles, f"role_menus[{i}].roles")
 
 
+def _migrate_legacy(store: dict) -> None:
+    if "guild_id" not in store:
+        return
+    gid = str(store.pop("guild_id"))
+    config = {
+        key: store.pop(key)
+        for key in ("kick_channel_id", "log_channel_id", "kick_exempt_roles", "join", "role_menus")
+        if key in store
+    }
+    validate_config(config)
+    store.setdefault("servers", {})[gid] = config
+
+
+def validate_store(store: dict) -> None:
+    _migrate_legacy(store)
+    servers = store.setdefault("servers", {})
+    if not isinstance(servers, dict):
+        raise SystemExit('config.json "servers" must be an object mapping guild IDs to configs.')
+    for gid, config in servers.items():
+        if not _is_id(gid):
+            raise SystemExit(f'config.json "servers" has a non-numeric guild ID "{gid}".')
+        if not isinstance(config, dict):
+            raise SystemExit(f'config.json "servers[{gid}]" must be an object.')
+        validate_config(config)
+
+
 class RoleBot(commands.Bot):
     def __init__(self) -> None:
         intents = discord.Intents.default()
         intents.members = True
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.store = ConfigStore(BASE_DIR / "config.json")
-        validate_config(self.store.data)
-        self.config: dict = self.store.data
+        validate_store(self.store.data)
+        self.configs: dict = self.store.data.setdefault("servers", {})
+
+    def guild_config(self, guild_id) -> dict:
+        key = str(guild_id)
+        if key not in self.configs:
+            self.configs[key] = default_guild_config()
+            self.save_config()
+        return self.configs[key]
 
     def save_config(self) -> bool:
         try:
@@ -137,16 +193,23 @@ class RoleBot(commands.Bot):
         for extension in ("cogs.reaction_roles", "cogs.join_roles", "cogs.guard", "cogs.settings"):
             await self.load_extension(extension)
 
-        guild = discord.Object(id=int(self.config["guild_id"]))
-        self.tree.copy_global_to(guild=guild)
-        await self.tree.sync(guild=guild)
-        log.info("Synced app commands to guild %s", guild.id)
+        await self.tree.sync()
+        log.info("Synced app commands globally (available in every server)")
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s", self.user)
+        for guild in self.guilds:
+            self.guild_config(guild.id)
+        if len(self.guilds) > 1:
+            log.info("Connected to %d servers: %s", len(self.guilds), ", ".join(g.name for g in self.guilds))
         cog = self.get_cog("ReactionRoles")
         if cog is not None:
             cog.rebuild_views()
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        self.guild_config(guild.id)
+        await self.tree.sync()
+        log.info("Joined %s (%s)", guild.name, guild.id)
 
 
 async def main() -> None:

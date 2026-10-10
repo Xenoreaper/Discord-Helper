@@ -26,7 +26,7 @@ def _role_mention(guild: discord.Guild, role_id) -> str:
 
 
 def _invite_text(bot: commands.Bot, guild: discord.Guild) -> str:
-    mappings = bot.config.get("join", {}).get("invites", {})
+    mappings = bot.guild_config(guild.id).get("join", {}).get("invites", {})
     if not mappings:
         return "none"
     lines = []
@@ -36,16 +36,37 @@ def _invite_text(bot: commands.Bot, guild: discord.Guild) -> str:
     return "\n".join(lines)[:1024] or "none"
 
 
-def _get_menu(bot: commands.Bot, menu_id: str) -> dict | None:
-    return next((menu for menu in bot.config.get("role_menus", []) if menu["id"] == menu_id), None)
+def _role_list_text(bot: commands.Bot, guild: discord.Guild, key: str) -> str:
+    role_ids = bot.guild_config(guild.id).get(key, [])
+    if not role_ids:
+        return "none"
+    lines = []
+    for role_id in role_ids:
+        role = guild.get_role(int(role_id))
+        lines.append(role.mention if role else f"`{role_id}` (not found)")
+    return "\n".join(lines)[:1024]
+
+
+def _exempt_roles_text(bot: commands.Bot, guild: discord.Guild) -> str:
+    return _role_list_text(bot, guild, "kick_exempt_roles")
+
+
+def _get_menu(bot: commands.Bot, guild: discord.Guild | None, menu_id: str) -> dict | None:
+    if guild is None:
+        return None
+    return next(
+        (menu for menu in bot.guild_config(guild.id).get("role_menus", []) if menu["id"] == menu_id),
+        None,
+    )
 
 
 def _menu_post_link(bot: commands.Bot, menu: dict) -> str | None:
+    guild_id = menu.get("guild_id")
     channel = menu.get("channel_id")
     message = menu.get("message_id")
-    if not (channel and message):
+    if not (guild_id and channel and message):
         return None
-    return f"https://discord.com/channels/{bot.config['guild_id']}/{channel}/{message}"
+    return f"https://discord.com/channels/{guild_id}/{channel}/{message}"
 
 
 def _parse_color(value: str) -> int | None:
@@ -60,11 +81,13 @@ def _parse_color(value: str) -> int | None:
 
 
 def build_settings_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Embed:
-    config = bot.config
+    config = bot.guild_config(guild.id)
     join = config.get("join", {})
     embed = discord.Embed(title="Server Settings", color=0x5865F2)
     embed.add_field(name="Kick channel", value=_channel_mention(bot, config.get("kick_channel_id")), inline=False)
     embed.add_field(name="Admin log channel", value=_channel_mention(bot, config.get("log_channel_id")), inline=False)
+    embed.add_field(name="Bot admin roles", value=_role_list_text(bot, guild, "admin_roles"), inline=False)
+    embed.add_field(name="Kick-exempt roles", value=_exempt_roles_text(bot, guild), inline=False)
     embed.add_field(name="Default role (on join)", value=_role_mention(guild, join.get("base_role_id")), inline=False)
     embed.add_field(name="Invite roles", value=_invite_text(bot, guild), inline=False)
     menus = config.get("role_menus", [])
@@ -84,7 +107,7 @@ def build_settings_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Emb
 
 
 def build_menus_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Embed:
-    menus = bot.config.get("role_menus", [])
+    menus = bot.guild_config(guild.id).get("role_menus", [])
     embed = discord.Embed(
         title="Role menus",
         description="Menus are only posted here — nothing gets posted by accident. "
@@ -106,7 +129,7 @@ def build_menus_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Embed:
 
 
 def build_menu_editor_embed(bot: commands.Bot, menu: dict) -> discord.Embed:
-    guild = bot.get_guild(int(bot.config["guild_id"]))
+    guild = bot.get_guild(int(menu["guild_id"])) if menu.get("guild_id") else None
     channel = guild.get_channel(int(menu["channel_id"])) if (guild and menu.get("channel_id")) else None
     embed_spec = menu.get("embed") or {}
     embed = discord.Embed(title=menu.get("name") or menu["id"], color=0x5865F2)
@@ -150,6 +173,17 @@ def build_clear_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Embed:
     return embed
 
 
+def build_roles_panel_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Embed:
+    embed = build_settings_embed(bot, guild)
+    embed.title = "Member & admin roles"
+    embed.description = (
+        "Select roles to add them — current roles are pre-selected, so deselect to remove "
+        "specific ones (submit empty to remove all). Admin roles can open /settings and bypass "
+        "the channel kick automatically; kick-exempt roles only bypass the kick."
+    )
+    return embed
+
+
 async def _fetch_invites(guild: discord.Guild) -> list[discord.Invite]:
     try:
         return await guild.invites()
@@ -168,53 +202,56 @@ class _InviteSelect(discord.ui.Select):
         super().__init__(placeholder="Select an invite to map to a role", options=options)
         self.bot = bot
 
-    async def callback(self, interaction: discord.Interaction) -> None:
+async def callback(self, interaction: discord.Interaction) -> None:
         code = self.values[0]
         invites = await _fetch_invites(interaction.guild)
         await interaction.response.edit_message(
-            embed=build_invites_embed(self.bot, interaction.guild, pending=code),
-            view=InviteRolesView(self.bot, invites, pending_invite=code),
+            embed=build_invites_embed(self.bot, interaction.guild),
+            view=InviteRolesView(self.bot, invites, interaction.guild, pending_invite=code),
         )
 
 
 class _RoleForInviteSelect(discord.ui.RoleSelect):
-    def __init__(self, bot: commands.Bot, code: str) -> None:
+    def __init__(self, bot: commands.Bot, code: str, guild: discord.Guild) -> None:
         super().__init__(placeholder=f"Pick the role for invite {code}", min_values=1, max_values=1)
         self.bot = bot
         self.code = code
+        self.guild = guild
 
     async def callback(self, interaction: discord.Interaction) -> None:
         role = self.values[0]
-        self.bot.config.setdefault("join", {}).setdefault("invites", {})[self.code] = str(role.id)
+        self.bot.guild_config(self.guild.id).setdefault("join", {}).setdefault("invites", {})[
+            self.code
+        ] = str(role.id)
         saved = self.bot.save_config()
         invites = await _fetch_invites(interaction.guild)
         await interaction.response.edit_message(
             embed=build_invites_embed(self.bot, interaction.guild),
-            view=InviteRolesView(self.bot, invites),
+            view=InviteRolesView(self.bot, invites, guild=self.guild),
         )
         if not saved:
             await interaction.followup.send(_SAVE_FAILED, ephemeral=True)
 
 
 class _RemoveInviteSelect(discord.ui.Select):
-    def __init__(self, bot: commands.Bot) -> None:
-        guild = bot.get_guild(int(bot.config["guild_id"]))
+    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
         options = []
-        for code, role_id in bot.config.get("join", {}).get("invites", {}).items():
+        for code, role_id in bot.guild_config(guild.id).get("join", {}).get("invites", {}).items():
             role = guild.get_role(int(role_id)) if guild else None
             label = f"{code} -> {role.name}" if role else f"{code} -> {role_id}"
             options.append(discord.SelectOption(label=label[:100], value=code))
         super().__init__(placeholder="Remove an invite mapping", options=options[:25])
         self.bot = bot
+        self.guild = guild
 
     async def callback(self, interaction: discord.Interaction) -> None:
         code = self.values[0]
-        self.bot.config.get("join", {}).get("invites", {}).pop(code, None)
+        self.bot.guild_config(self.guild.id).get("join", {}).get("invites", {}).pop(code, None)
         saved = self.bot.save_config()
         invites = await _fetch_invites(interaction.guild)
         await interaction.response.edit_message(
             embed=build_invites_embed(self.bot, interaction.guild),
-            view=InviteRolesView(self.bot, invites),
+            view=InviteRolesView(self.bot, invites, guild=self.guild),
         )
         if not saved:
             await interaction.followup.send(_SAVE_FAILED, ephemeral=True)
@@ -233,16 +270,23 @@ class _BackToSettingsButton(discord.ui.Button):
 
 
 class InviteRolesView(discord.ui.View):
-    def __init__(self, bot: commands.Bot, invites: list[discord.Invite], pending_invite: str | None = None) -> None:
+    def __init__(
+        self,
+        bot: commands.Bot,
+        invites: list[discord.Invite],
+        guild: discord.Guild,
+        pending_invite: str | None = None,
+    ) -> None:
         super().__init__(timeout=900)
         self.bot = bot
+        self.guild = guild
         if pending_invite is not None:
-            self.add_item(_RoleForInviteSelect(bot, pending_invite))
+            self.add_item(_RoleForInviteSelect(bot, pending_invite, guild))
         else:
             if invites:
                 self.add_item(_InviteSelect(bot, invites))
-            if bot.config.get("join", {}).get("invites"):
-                self.add_item(_RemoveInviteSelect(bot))
+            if bot.guild_config(guild.id).get("join", {}).get("invites"):
+                self.add_item(_RemoveInviteSelect(bot, guild))
         self.add_item(_BackToSettingsButton(bot))
 
 
@@ -252,12 +296,14 @@ class RoleCustomizeModal(discord.ui.Modal):
         bot: commands.Bot,
         menu: dict,
         role: discord.Role,
+        guild: discord.Guild,
         current: dict | None = None,
     ) -> None:
         super().__init__(title=f"Customize {role.name}"[:45])
         self.bot = bot
         self.menu = menu
         self.role = role
+        self.guild = guild
         current = current or {}
         emoji_default = current.get("emoji")
         self.emoji_input = discord.ui.TextInput(
@@ -291,7 +337,7 @@ class RoleCustomizeModal(discord.ui.Modal):
             embed.add_field(name="Warning", value=result[1], inline=False)
         await interaction.response.edit_message(
             embed=embed,
-            view=MenuEditorView(self.bot, self.menu["id"]),
+            view=MenuEditorView(self.bot, self.guild, self.menu["id"]),
         )
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
@@ -324,10 +370,11 @@ class RoleCustomizeModal(discord.ui.Modal):
 
 
 class MenuAppearanceModal(discord.ui.Modal):
-    def __init__(self, bot: commands.Bot, menu: dict) -> None:
+    def __init__(self, bot: commands.Bot, menu: dict, guild: discord.Guild) -> None:
         super().__init__(title=f"Appearance · {menu.get('name') or menu['id']}"[:45])
         self.bot = bot
         self.menu = menu
+        self.guild = guild
         spec = menu.get("embed") or {}
         color = spec.get("color")
         self.title_input = discord.ui.TextInput(
@@ -383,16 +430,17 @@ class MenuAppearanceModal(discord.ui.Modal):
             embed.add_field(name="Warning", value=result[1], inline=False)
         await interaction.response.edit_message(
             embed=embed,
-            view=MenuEditorView(self.bot, self.menu["id"]),
+            view=MenuEditorView(self.bot, self.guild, self.menu["id"]),
         )
         await interaction.followup.send("Appearance updated and reflected in the posted message.", ephemeral=True)
 
 
 class MenuNameModal(discord.ui.Modal):
-    def __init__(self, bot: commands.Bot, menu: dict) -> None:
+    def __init__(self, bot: commands.Bot, menu: dict, guild: discord.Guild) -> None:
         super().__init__(title="Rename menu")
         self.bot = bot
         self.menu = menu
+        self.guild = guild
         self.name_input = discord.ui.TextInput(label="Name", max_length=80, default=menu.get("name"))
         self.add_item(self.name_input)
 
@@ -408,7 +456,7 @@ class MenuNameModal(discord.ui.Modal):
             embed.add_field(name="Warning", value=_SAVE_FAILED, inline=False)
         await interaction.response.edit_message(
             embed=embed,
-            view=MenuEditorView(self.bot, self.menu["id"]),
+            view=MenuEditorView(self.bot, self.guild, self.menu["id"]),
         )
 
 
@@ -427,7 +475,7 @@ class _AddRoleSelect(discord.ui.RoleSelect):
         self.menu_id = menu["id"]
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        menu = _get_menu(self.bot, self.menu_id)
+        menu = _get_menu(self.bot, interaction.guild, self.menu_id)
         if menu is None:
             return
         role = self.values[0]
@@ -435,13 +483,13 @@ class _AddRoleSelect(discord.ui.RoleSelect):
             (item for item in menu.get("roles", []) if str(item["role_id"]) == str(role.id)), None
         )
         await interaction.response.send_modal(
-            RoleCustomizeModal(self.bot, menu, role, current)
+            RoleCustomizeModal(self.bot, menu, role, interaction.guild, current)
         )
 
 
 class _RemoveRoleSelect(discord.ui.Select):
     def __init__(self, bot: commands.Bot, menu: dict) -> None:
-        guild = bot.get_guild(int(bot.config["guild_id"]))
+        guild = bot.get_guild(int(menu["guild_id"])) if menu.get("guild_id") else None
         options = []
         for spec in menu.get("roles", []):
             role = guild.get_role(int(spec["role_id"])) if guild else None
@@ -458,7 +506,7 @@ class _RemoveRoleSelect(discord.ui.Select):
         self.menu_id = menu["id"]
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        menu = _get_menu(self.bot, self.menu_id)
+        menu = _get_menu(self.bot, interaction.guild, self.menu_id)
         if menu is None:
             return
         role_id = self.values[0]
@@ -478,17 +526,18 @@ class _RemoveRoleSelect(discord.ui.Select):
             embed.add_field(name="Warning", value=result[1], inline=False)
         await interaction.response.edit_message(
             embed=embed,
-            view=MenuEditorView(self.bot, self.menu_id),
+            view=MenuEditorView(self.bot, interaction.guild, self.menu_id),
         )
         await interaction.followup.send("Role removed and posted menu refreshed.", ephemeral=True)
 
 
 class MenuEditorView(discord.ui.View):
-    def __init__(self, bot: commands.Bot, menu_id: str) -> None:
+    def __init__(self, bot: commands.Bot, guild: discord.Guild, menu_id: str) -> None:
         super().__init__(timeout=900)
         self.bot = bot
+        self.guild = guild
         self.menu_id = menu_id
-        menu = _get_menu(bot, menu_id)
+        menu = _get_menu(bot, guild, menu_id)
         if menu is not None:
             self.add_item(_AddRoleSelect(bot, menu))
             if menu.get("roles"):
@@ -503,7 +552,7 @@ class MenuEditorView(discord.ui.View):
         row=2,
     )
     async def move_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect) -> None:
-        menu = _get_menu(self.bot, self.menu_id)
+        menu = _get_menu(self.bot, self.guild, self.menu_id)
         if menu is None:
             return
         cog = self.bot.get_cog("ReactionRoles")
@@ -515,13 +564,13 @@ class MenuEditorView(discord.ui.View):
             embed.add_field(name="Warning", value=msg, inline=False)
         await interaction.response.edit_message(
             embed=embed,
-            view=MenuEditorView(self.bot, self.menu_id),
+            view=MenuEditorView(self.bot, self.guild, self.menu_id),
         )
         await interaction.followup.send(msg.capitalize(), ephemeral=True)
 
     @discord.ui.button(label="Post / Refresh", style=discord.ButtonStyle.primary, row=3)
     async def post(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        menu = _get_menu(self.bot, self.menu_id)
+        menu = _get_menu(self.bot, self.guild, self.menu_id)
         if menu is None:
             return
         cog = self.bot.get_cog("ReactionRoles")
@@ -534,27 +583,27 @@ class MenuEditorView(discord.ui.View):
             embed.add_field(name="Warning", value=msg, inline=False)
         await interaction.response.edit_message(
             embed=embed,
-            view=MenuEditorView(self.bot, self.menu_id),
+            view=MenuEditorView(self.bot, self.guild, self.menu_id),
         )
         await interaction.followup.send(msg.capitalize(), ephemeral=True)
 
     @discord.ui.button(label="Appearance", style=discord.ButtonStyle.secondary, row=3)
     async def appearance(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        menu = _get_menu(self.bot, self.menu_id)
+        menu = _get_menu(self.bot, self.guild, self.menu_id)
         if menu is None:
             return
-        await interaction.response.send_modal(MenuAppearanceModal(self.bot, menu))
+        await interaction.response.send_modal(MenuAppearanceModal(self.bot, menu, self.guild))
 
     @discord.ui.button(label="Rename", style=discord.ButtonStyle.secondary, row=3)
     async def rename(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        menu = _get_menu(self.bot, self.menu_id)
+        menu = _get_menu(self.bot, self.guild, self.menu_id)
         if menu is None:
             return
-        await interaction.response.send_modal(MenuNameModal(self.bot, menu))
+        await interaction.response.send_modal(MenuNameModal(self.bot, menu, self.guild))
 
     @discord.ui.button(label="Unpost", style=discord.ButtonStyle.secondary, row=3)
     async def unpost(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        menu = _get_menu(self.bot, self.menu_id)
+        menu = _get_menu(self.bot, self.guild, self.menu_id)
         if menu is None:
             return
         cog = self.bot.get_cog("ReactionRoles")
@@ -563,13 +612,13 @@ class MenuEditorView(discord.ui.View):
         embed = build_menu_editor_embed(self.bot, menu)
         await interaction.response.edit_message(
             embed=embed,
-            view=MenuEditorView(self.bot, self.menu_id),
+            view=MenuEditorView(self.bot, self.guild, self.menu_id),
         )
         await interaction.followup.send("Message deleted and menu unposted.", ephemeral=True)
 
     @discord.ui.button(label="Delete menu", style=discord.ButtonStyle.danger, row=4)
     async def delete(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        menu = _get_menu(self.bot, self.menu_id)
+        menu = _get_menu(self.bot, self.guild, self.menu_id)
         if menu is None:
             return
         embed = build_menu_editor_embed(self.bot, menu)
@@ -580,56 +629,53 @@ class MenuEditorView(discord.ui.View):
         )
         await interaction.response.edit_message(
             embed=embed,
-            view=DeleteMenuConfirmView(self.bot, self.menu_id),
+            view=DeleteMenuConfirmView(self.bot, self.guild, self.menu_id),
         )
 
     @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, row=4)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if interaction.guild is None:
-            return
         await interaction.response.edit_message(
-            embed=build_menus_embed(self.bot, interaction.guild),
-            view=MenuPanelView(self.bot),
+            embed=build_menus_embed(self.bot, self.guild),
+            view=MenuPanelView(self.bot, self.guild),
         )
 
 
 class DeleteMenuConfirmView(discord.ui.View):
-    def __init__(self, bot: commands.Bot, menu_id: str) -> None:
+    def __init__(self, bot: commands.Bot, guild: discord.Guild, menu_id: str) -> None:
         super().__init__(timeout=900)
         self.bot = bot
+        self.guild = guild
         self.menu_id = menu_id
 
     @discord.ui.button(label="Confirm delete", style=discord.ButtonStyle.danger)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        menu = _get_menu(self.bot, self.menu_id)
+        menu = _get_menu(self.bot, self.guild, self.menu_id)
         if menu is not None:
             cog = self.bot.get_cog("ReactionRoles")
             if cog is not None:
                 await cog.delete_menu(menu)
-        if interaction.guild is None:
-            return
-        embed = build_menus_embed(self.bot, interaction.guild)
+        embed = build_menus_embed(self.bot, self.guild)
         embed.description = "Menu deleted."
         await interaction.response.edit_message(
             embed=embed,
-            view=MenuPanelView(self.bot),
+            view=MenuPanelView(self.bot, self.guild),
         )
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        menu = _get_menu(self.bot, self.menu_id)
+        menu = _get_menu(self.bot, self.guild, self.menu_id)
         if menu is None:
             return
         await interaction.response.edit_message(
             embed=build_menu_editor_embed(self.bot, menu),
-            view=MenuEditorView(self.bot, self.menu_id),
+            view=MenuEditorView(self.bot, self.guild, self.menu_id),
         )
 
 
 class _MenuSelect(discord.ui.Select):
-    def __init__(self, bot: commands.Bot) -> None:
+    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
         options = []
-        for menu in bot.config.get("role_menus", []):
+        for menu in bot.guild_config(guild.id).get("role_menus", []):
             name = menu.get("name") or menu["id"]
             role_count = len(menu.get("roles", []))
             posted = "posted" if menu.get("message_id") else "not posted"
@@ -637,24 +683,26 @@ class _MenuSelect(discord.ui.Select):
             options.append(discord.SelectOption(label=label, value=menu["id"]))
         super().__init__(placeholder="Manage a role menu", options=options[:25])
         self.bot = bot
+        self.guild = guild
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        menu = _get_menu(self.bot, self.values[0])
+        menu = _get_menu(self.bot, self.guild, self.values[0])
         if menu is None:
             return
         await interaction.response.edit_message(
             embed=build_menu_editor_embed(self.bot, menu),
-            view=MenuEditorView(self.bot, menu["id"]),
+            view=MenuEditorView(self.bot, self.guild, menu["id"]),
         )
 
 
 class MenuPanelView(discord.ui.View):
-    def __init__(self, bot: commands.Bot) -> None:
+    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
         super().__init__(timeout=900)
         self.bot = bot
-        menus = bot.config.get("role_menus", [])
+        self.guild = guild
+        menus = bot.guild_config(guild.id).get("role_menus", [])
         if menus:
-            self.add_item(_MenuSelect(bot))
+            self.add_item(_MenuSelect(bot, guild))
 
     @discord.ui.button(label="New menu", style=discord.ButtonStyle.primary)
     async def new_menu(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -664,7 +712,7 @@ class MenuPanelView(discord.ui.View):
                 description="Choose the channel for this menu. You can change it later.",
                 color=0x5865F2,
             ),
-            view=NewMenuView(self.bot),
+            view=NewMenuView(self.bot, self.guild),
         )
 
     @discord.ui.button(label="Repost / refresh all", style=discord.ButtonStyle.secondary)
@@ -672,29 +720,28 @@ class MenuPanelView(discord.ui.View):
         cog = self.bot.get_cog("ReactionRoles")
         posted = failed = 0
         if cog is not None:
-            posted, failed = await cog.refresh_all()
-        embed = build_menus_embed(self.bot, interaction.guild)
+            posted, failed = await cog.refresh_all(self.guild)
+        embed = build_menus_embed(self.bot, self.guild)
         embed.add_field(name="Result", value=f"{posted} posted/refreshed, {failed} failed", inline=False)
         await interaction.response.edit_message(
             embed=embed,
-            view=MenuPanelView(self.bot),
+            view=MenuPanelView(self.bot, self.guild),
         )
         await interaction.followup.send(f"{posted} posted/refreshed, {failed} failed.", ephemeral=True)
 
     @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if interaction.guild is None:
-            return
         await interaction.response.edit_message(
-            embed=build_settings_embed(self.bot, interaction.guild),
+            embed=build_settings_embed(self.bot, self.guild),
             view=SettingsPanelView(self.bot),
         )
 
 
 class NewMenuView(discord.ui.View):
-    def __init__(self, bot: commands.Bot) -> None:
+    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
         super().__init__(timeout=900)
         self.bot = bot
+        self.guild = guild
 
     @discord.ui.select(
         cls=discord.ui.ChannelSelect,
@@ -704,7 +751,7 @@ class NewMenuView(discord.ui.View):
         max_values=1,
     )
     async def channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect) -> None:
-        menus = self.bot.config.setdefault("role_menus", [])
+        menus = self.bot.guild_config(self.guild.id).setdefault("role_menus", [])
         used = {menu["id"] for menu in menus}
         n = 1
         while f"menu{n}" in used:
@@ -712,6 +759,7 @@ class NewMenuView(discord.ui.View):
         menu_id = f"menu{n}"
         menu = {
             "id": menu_id,
+            "guild_id": str(self.guild.id),
             "name": f"Menu {n}",
             "channel_id": str(select.values[0].id),
             "message_id": None,
@@ -733,17 +781,15 @@ class NewMenuView(discord.ui.View):
             embed.add_field(name="Warning", value=_SAVE_FAILED, inline=False)
         await interaction.response.edit_message(
             embed=embed,
-            view=MenuEditorView(self.bot, menu_id),
+            view=MenuEditorView(self.bot, self.guild, menu_id),
         )
         await interaction.followup.send("Menu created — add roles to it now.", ephemeral=True)
 
     @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if interaction.guild is None:
-            return
         await interaction.response.edit_message(
-            embed=build_menus_embed(self.bot, interaction.guild),
-            view=MenuPanelView(self.bot),
+            embed=build_menus_embed(self.bot, self.guild),
+            view=MenuPanelView(self.bot, self.guild),
         )
 
 
@@ -759,22 +805,32 @@ class ClearPanelView(discord.ui.View):
             embed.add_field(name="Warning", value=_SAVE_FAILED, inline=False)
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="Clear kick", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Clear kick", style=discord.ButtonStyle.danger, row=0)
     async def clear_kick(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        self.bot.config["kick_channel_id"] = None
+        self.bot.guild_config(interaction.guild.id)["kick_channel_id"] = None
         await self._after_clear(interaction)
 
-    @discord.ui.button(label="Clear log", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Clear log", style=discord.ButtonStyle.danger, row=0)
     async def clear_log(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        self.bot.config["log_channel_id"] = None
+        self.bot.guild_config(interaction.guild.id)["log_channel_id"] = None
         await self._after_clear(interaction)
 
-    @discord.ui.button(label="Clear default", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Clear default", style=discord.ButtonStyle.danger, row=1)
     async def clear_default(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        self.bot.config.setdefault("join", {})["base_role_id"] = None
+        self.bot.guild_config(interaction.guild.id).setdefault("join", {})["base_role_id"] = None
         await self._after_clear(interaction)
 
-    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Clear exempt roles", style=discord.ButtonStyle.danger, row=1)
+    async def clear_exempt(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.bot.guild_config(interaction.guild.id)["kick_exempt_roles"] = []
+        await self._after_clear(interaction)
+
+    @discord.ui.button(label="Clear admin roles", style=discord.ButtonStyle.danger, row=1)
+    async def clear_admin(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.bot.guild_config(interaction.guild.id)["admin_roles"] = []
+        await self._after_clear(interaction)
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, row=2)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.edit_message(
             embed=build_settings_embed(self.bot, interaction.guild),
@@ -799,9 +855,10 @@ class SettingsPanelView(discord.ui.View):
         placeholder="Set the kick channel",
         min_values=1,
         max_values=1,
+        row=0,
     )
     async def kick_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect) -> None:
-        self.bot.config["kick_channel_id"] = str(select.values[0].id)
+        self.bot.guild_config(interaction.guild.id)["kick_channel_id"] = str(select.values[0].id)
         saved = self.bot.save_config()
         await self._refresh(interaction, saved)
 
@@ -811,9 +868,10 @@ class SettingsPanelView(discord.ui.View):
         placeholder="Set the admin log channel",
         min_values=1,
         max_values=1,
+        row=1,
     )
     async def log_channel(self, interaction: discord.Interaction, select: discord.ui.ChannelSelect) -> None:
-        self.bot.config["log_channel_id"] = str(select.values[0].id)
+        self.bot.guild_config(interaction.guild.id)["log_channel_id"] = str(select.values[0].id)
         saved = self.bot.save_config()
         await self._refresh(interaction, saved)
 
@@ -822,38 +880,126 @@ class SettingsPanelView(discord.ui.View):
         placeholder="Set the default role on join",
         min_values=1,
         max_values=1,
+        row=2,
     )
     async def default_role(self, interaction: discord.Interaction, select: discord.ui.RoleSelect) -> None:
-        self.bot.config.setdefault("join", {})["base_role_id"] = str(select.values[0].id)
+        self.bot.guild_config(interaction.guild.id).setdefault("join", {})["base_role_id"] = str(select.values[0].id)
         saved = self.bot.save_config()
         await self._refresh(interaction, saved)
 
-    @discord.ui.button(label="Role menus", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Role menus", style=discord.ButtonStyle.secondary, row=3)
     async def role_menus(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.edit_message(
             embed=build_menus_embed(self.bot, interaction.guild),
-            view=MenuPanelView(self.bot),
+            view=MenuPanelView(self.bot, interaction.guild),
         )
 
-    @discord.ui.button(label="Invite roles", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Invite roles", style=discord.ButtonStyle.secondary, row=3)
     async def invites(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         invites = await _fetch_invites(interaction.guild)
         await interaction.response.edit_message(
             embed=build_invites_embed(self.bot, interaction.guild),
-            view=InviteRolesView(self.bot, invites),
+            view=InviteRolesView(self.bot, invites, interaction.guild),
         )
 
-    @discord.ui.button(label="Clear...", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Role permissions", style=discord.ButtonStyle.secondary, row=3)
+    async def role_permissions(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(
+            embed=build_roles_panel_embed(self.bot, interaction.guild),
+            view=RolesPanelView(self.bot, interaction.guild),
+        )
+
+    @discord.ui.button(label="Clear...", style=discord.ButtonStyle.danger, row=4)
     async def clear(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.edit_message(
             embed=build_clear_embed(self.bot, interaction.guild),
             view=ClearPanelView(self.bot),
         )
 
-    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Close", style=discord.ButtonStyle.secondary, row=4)
     async def close(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.edit_message(
             content="Settings closed. Run `/settings` again anytime.", embed=None, view=None
+        )
+
+
+class _ExemptRolesSelect(discord.ui.RoleSelect):
+    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
+        default = _resolved_roles(bot, guild, "kick_exempt_roles")
+        super().__init__(
+            placeholder="Set roles exempt from the channel kick",
+            min_values=0,
+            max_values=25,
+            row=0,
+            default_values=default,
+        )
+        self.bot = bot
+        self.guild = guild
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        self.bot.guild_config(self.guild.id)["kick_exempt_roles"] = [str(role.id) for role in self.values]
+        await _refresh_roles_panel(interaction, self.bot, self.guild, self.bot.save_config())
+
+
+class _AdminRolesSelect(discord.ui.RoleSelect):
+    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
+        default = _resolved_roles(bot, guild, "admin_roles")
+        super().__init__(
+            placeholder="Set roles that can administrate the bot",
+            min_values=0,
+            max_values=25,
+            row=1,
+            default_values=default,
+        )
+        self.bot = bot
+        self.guild = guild
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        self.bot.guild_config(self.guild.id)["admin_roles"] = [str(role.id) for role in self.values]
+        await _refresh_roles_panel(interaction, self.bot, self.guild, self.bot.save_config())
+
+
+def _resolved_roles(bot: commands.Bot, guild: discord.Guild, key: str) -> list[discord.Role]:
+    roles = []
+    for role_id in bot.guild_config(guild.id).get(key, []):
+        role = guild.get_role(int(role_id))
+        if role is not None:
+            roles.append(role)
+    return roles
+
+
+async def _refresh_roles_panel(
+    interaction: discord.Interaction, bot: commands.Bot, guild: discord.Guild, saved: bool
+) -> None:
+    embed = build_roles_panel_embed(bot, guild)
+    if not saved:
+        embed.add_field(name="Warning", value=_SAVE_FAILED, inline=False)
+    await interaction.response.edit_message(embed=embed, view=RolesPanelView(bot, guild))
+
+
+class RolesPanelView(discord.ui.View):
+    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
+        super().__init__(timeout=900)
+        self.bot = bot
+        self.guild = guild
+        self.add_item(_ExemptRolesSelect(bot, guild))
+        self.add_item(_AdminRolesSelect(bot, guild))
+
+    @discord.ui.button(label="Remove all exempt", style=discord.ButtonStyle.danger, row=2)
+    async def remove_exempt(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.bot.guild_config(self.guild.id)["kick_exempt_roles"] = []
+        await _refresh_roles_panel(interaction, self.bot, self.guild, self.bot.save_config())
+
+    @discord.ui.button(label="Remove all admin", style=discord.ButtonStyle.danger, row=2)
+    async def remove_admin(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        self.bot.guild_config(self.guild.id)["admin_roles"] = []
+        await _refresh_roles_panel(interaction, self.bot, self.guild, self.bot.save_config())
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, row=3)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(
+            embed=build_settings_embed(self.bot, self.guild),
+            view=SettingsPanelView(self.bot),
         )
 
 
@@ -861,12 +1007,26 @@ class Settings(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
+    @staticmethod
+    def _is_bot_admin(interaction: discord.Interaction) -> bool:
+        member = interaction.user
+        if not isinstance(member, discord.Member):
+            return False
+        if member.guild_permissions.administrator:
+            return True
+        admin_roles = interaction.client.guild_config(interaction.guild.id).get("admin_roles", [])
+        return any(member.get_role(int(role_id)) is not None for role_id in admin_roles or [])
+
     @app_commands.command(name="settings", description="Open the interactive server settings panel")
-    @app_commands.default_permissions(administrator=True)
-    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.guild_only()
     async def settings_cmd(self, interaction: discord.Interaction) -> None:
         if interaction.guild is None:
             await interaction.response.send_message("This command only works inside a server.", ephemeral=True)
+            return
+        if not self._is_bot_admin(interaction):
+            await interaction.response.send_message(
+                "You need the Administrator permission or a bot admin role to use this command.", ephemeral=True
+            )
             return
         await interaction.response.send_message(
             embed=build_settings_embed(self.bot, interaction.guild),
@@ -878,7 +1038,7 @@ class Settings(commands.Cog):
     async def settings_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
         if isinstance(error, app_commands.MissingPermissions):
             await interaction.response.send_message(
-                "You need the Administrator permission to use this command.", ephemeral=True
+                "You need the Administrator permission or a bot admin role to use this command.", ephemeral=True
             )
         else:
             await interaction.response.send_message("Something went wrong, please try again.", ephemeral=True)
