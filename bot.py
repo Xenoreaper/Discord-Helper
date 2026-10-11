@@ -225,6 +225,9 @@ class RoleBot(commands.Bot):
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s", self.user)
+        status = os.getenv("BOT_STATUS")
+        if status:
+            await self.change_presence(activity=discord.CustomActivity(name=status))
         for guild in self.guilds:
             self.guild_config(guild.id)
         if len(self.guilds) > 1:
