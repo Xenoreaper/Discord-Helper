@@ -1,14 +1,51 @@
+import re
+
 import discord
 from discord.ext import commands
 
 from emoji_utils import is_valid_emoji
 
+_INLINE_REF = re.compile(r"(?<![\w<#@/&?])([#@])([A-Za-z0-9_.\-]+)")
+
+
+def resolve_links(guild: discord.Guild | None, text: str | None) -> str | None:
+    if not text or guild is None:
+        return text
+
+    def replace(match: re.Match) -> str:
+        sigil, name = match.group(1), match.group(2)
+        low = name.lower()
+        if sigil == "#":
+            channel = next(
+                (c for c in guild.channels if getattr(c, "name", None) and c.name.lower() == low),
+                None,
+            )
+            found = channel
+        else:
+            found = next(
+                (r for r in guild.roles if not r.is_default() and r.name.lower() == low),
+                None,
+            ) or next(
+                (
+                    m
+                    for m in guild.members
+                    if m.name.lower() == low
+                    or m.display_name.lower() == low
+                    or (m.nick and m.nick.lower() == low)
+                ),
+                None,
+            )
+        return found.mention if found is not None else match.group(0)
+
+    return _INLINE_REF.sub(replace, text)
+
 
 def build_embed(bot: commands.Bot, menu_spec: dict) -> discord.Embed:
+    guild = _menu_guild(bot, menu_spec)
     embed_spec = menu_spec.get("embed") or {}
     embed = discord.Embed(
         title=embed_spec.get("title"),
-        description=embed_spec.get("description"),
+        description=resolve_links(guild, embed_spec.get("description")),
         color=discord.Color(int(embed_spec.get("color", 0x5865F2))),
     )
     if embed_spec.get("footer"):
@@ -31,18 +68,32 @@ def _build_buttons(bot: commands.Bot, menu_spec: dict, guild: discord.Guild | No
             continue
         label = (role_spec.get("label") or role.name)[:80]
         emoji = role_spec.get("emoji") if is_valid_emoji(role_spec.get("emoji")) else None
-        buttons.append(RoleButton(menu_spec["id"], role.id, label, emoji))
+        limit = role_spec.get("limit")
+        if limit:
+            limit = int(limit)
+            holders = len(role.members)
+            suffix = f" ({holders}/{limit})"
+            label = f"{label[: 80 - len(suffix)]}{suffix}"
+        buttons.append(RoleButton(bot, menu_spec["id"], role.id, label, emoji))
     return buttons
 
 
 class RoleButton(discord.ui.Button):
-    def __init__(self, menu_id: str, role_id: int, label: str, emoji: str | None = None) -> None:
+    def __init__(
+        self,
+        bot: commands.Bot,
+        menu_id: str,
+        role_id: int,
+        label: str,
+        emoji: str | None = None,
+    ) -> None:
         super().__init__(
             label=label or "Role",
             emoji=emoji,
             style=discord.ButtonStyle.primary,
             custom_id=f"role_menu:{menu_id}:{role_id}",
         )
+        self.bot = bot
         self.menu_id = menu_id
         self.role_id = role_id
 
@@ -73,6 +124,16 @@ class RoleButton(discord.ui.Button):
                 await member.remove_roles(role, reason="Role menu")
                 text = f"Removed the **{role.name}** role."
             else:
+                limit = self._role_limit(guild)
+                if limit is not None:
+                    holders = [m for m in role.members if isinstance(m, discord.Member)]
+                    if len(holders) >= limit:
+                        await interaction.response.send_message(
+                            f"Sorry, the **{role.name}** role is limited to {limit} member(s) "
+                            "at once and it's full right now.",
+                            ephemeral=True,
+                        )
+                        return
                 await member.add_roles(role, reason="Role menu")
                 text = f"You now have the **{role.name}** role."
         except discord.Forbidden:
@@ -83,6 +144,22 @@ class RoleButton(discord.ui.Button):
             return
 
         await interaction.response.send_message(text, ephemeral=True)
+
+    def _menu(self, guild: discord.Guild) -> dict | None:
+        return next(
+            (m for m in self.bot.guild_config(guild.id).get("role_menus", []) if m["id"] == self.menu_id),
+            None,
+        )
+
+    def _role_limit(self, guild: discord.Guild) -> int | None:
+        menu = self._menu(guild)
+        if menu is None:
+            return None
+        spec = next((r for r in menu.get("roles", []) if str(r.get("role_id")) == str(self.role_id)), None)
+        if spec is None:
+            return None
+        limit = spec.get("limit")
+        return int(limit) if limit else None
 
 
 class RoleMenuView(discord.ui.View):
@@ -102,6 +179,25 @@ class ReactionRoles(commands.Cog):
 
     def _menu_key(self, menu: dict) -> tuple[str, str]:
         return (str(menu.get("guild_id") or ""), menu["id"])
+
+    @commands.Cog.listener()
+    async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
+        if before.roles == after.roles:
+            return
+        changed = {str(role.id) for role in before.roles} ^ {str(role.id) for role in after.roles}
+        await self.refresh_menus_for_roles(after.guild, changed)
+
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member) -> None:
+        await self.refresh_menus_for_roles(member.guild, {str(role.id) for role in member.roles})
+
+    async def refresh_menus_for_roles(self, guild: discord.Guild, changed_role_ids: set[str]) -> None:
+        if not changed_role_ids:
+            return
+        for menu in self.bot.guild_config(guild.id).get("role_menus", []):
+            limited = {str(spec["role_id"]) for spec in menu.get("roles", []) if spec.get("limit")}
+            if limited & changed_role_ids:
+                await self.refresh_menu(menu)
 
     def rebuild_views(self) -> None:
         self.views = {}
@@ -132,7 +228,14 @@ class ReactionRoles(commands.Cog):
             return False, reason
 
         embed = build_embed(self.bot, menu)
-        view = self.views.get(self._menu_key(menu)) or RoleMenuView(self.bot, menu)
+        view = self.views.get(self._menu_key(menu))
+        if view is None:
+            view = RoleMenuView(self.bot, menu)
+            self.views[self._menu_key(menu)] = view
+        else:
+            view.clear_items()
+            for button in _build_buttons(self.bot, menu, _menu_guild(self.bot, menu)):
+                view.add_item(button)
         message_id = menu.get("message_id")
         if message_id:
             try:

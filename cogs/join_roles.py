@@ -51,7 +51,11 @@ class JoinRoles(commands.Cog):
         return best_invite if best_delta > 0 else None
 
     async def _log_join(
-        self, member: discord.Member, invite: discord.Invite | None, invite_role: discord.Role | None
+        self,
+        member: discord.Member,
+        invite: discord.Invite | None,
+        invite_role: discord.Role | None,
+        skip_reason: str | None = None,
     ) -> None:
         log_channel_id = self.bot.guild_config(member.guild.id).get("log_channel_id")
         if not log_channel_id:
@@ -83,6 +87,8 @@ class JoinRoles(commands.Cog):
             value=invite_role.mention if invite_role is not None else "None",
             inline=False,
         )
+        if skip_reason:
+            embed.add_field(name="Note", value=f"Invite role skipped — {skip_reason}", inline=False)
         embed.set_footer(text=f"{member} • {member.id}")
 
         try:
@@ -128,16 +134,63 @@ class JoinRoles(commands.Cog):
         invite = await self._detect_invite(member.guild)
         used_code = invite.code if invite is not None else None
         invite_role: discord.Role | None = None
-        if used_code is not None and used_code in invite_roles:
-            invite_role = member.guild.get_role(int(invite_roles[used_code]))
-            if invite_role is not None:
-                roles.append(invite_role)
-                log.info("%s joined via invite %s, granting %s", member, used_code, invite_role.name)
+        skip_reason: str | None = None
+        if used_code in invite_roles:
+            spec = _invite_spec(invite_roles[used_code])
+            if spec is None:
+                log.warning("Invite %s has an invalid role mapping in the config", used_code)
+            else:
+                candidate = member.guild.get_role(int(spec["role_id"]))
+                if candidate is None:
+                    log.warning("Invite %s points to a role that no longer exists", used_code)
+                else:
+                    allowed, reason = _invite_allows(spec, invite)
+                    if allowed:
+                        roles.append(candidate)
+                        invite_role = candidate
+                        if _consume_used(spec):
+                            self.bot.save_config()
+                        log.info("%s joined via invite %s, granting %s", member, used_code, candidate.name)
+                    else:
+                        skip_reason = reason
 
         if roles:
             await self._grant_roles(member, roles)
 
-        await self._log_join(member, invite, invite_role)
+        await self._log_join(member, invite, invite_role, skip_reason)
+
+
+def _invite_spec(raw) -> dict | None:
+    if isinstance(raw, dict):
+        return raw
+    if _is_role_id(raw):
+        return {"role_id": str(raw)}
+    return None
+
+
+def _is_role_id(value) -> bool:
+    return value not in (None, "") and str(value).isdigit()
+
+
+def _invite_allows(spec: dict, invite: discord.Invite | None) -> tuple[bool, str | None]:
+    window_days = spec.get("within_days")
+    if window_days:
+        created = invite.created_at if invite is not None else None
+        if created is not None:
+            age = (discord.utils.utcnow() - created).total_seconds()
+            if age > window_days * 86400:
+                return False, f"over the {window_days}d window for this invite"
+    max_uses = spec.get("max_uses")
+    if max_uses and (spec.get("used") or 0) >= max_uses:
+        return False, f"this invite has already granted the role {max_uses} times"
+    return True, None
+
+
+def _consume_used(spec: dict) -> bool:
+    if not spec.get("max_uses"):
+        return False
+    spec["used"] = (spec.get("used") or 0) + 1
+    return True
 
 
 async def setup(bot: commands.Bot) -> None:

@@ -30,9 +30,18 @@ def _invite_text(bot: commands.Bot, guild: discord.Guild) -> str:
     if not mappings:
         return "none"
     lines = []
-    for code, role_id in mappings.items():
-        role = guild.get_role(int(role_id))
-        lines.append(f"`{code}` -> {role.mention if role else role_id}")
+    for code, spec in mappings.items():
+        role_id = spec if isinstance(spec, str) else spec.get("role_id")
+        role = guild.get_role(int(role_id)) if role_id else None
+        label = role.mention if role else f"`{role_id}`"
+        if isinstance(spec, dict) and (spec.get("max_uses") or spec.get("within_days")):
+            bits = []
+            if spec.get("max_uses"):
+                bits.append(f"used {spec.get('used') or 0}/{spec['max_uses']}")
+            if spec.get("within_days"):
+                bits.append(f"{spec['within_days']}d window")
+            label += f" ({', '.join(bits)})"
+        lines.append(f"`{code}` -> {label}")
     return "\n".join(lines)[:1024] or "none"
 
 
@@ -78,6 +87,16 @@ def _parse_color(value: str) -> int | None:
     if value.isdigit() and int(value) <= 0xFFFFFF:
         return int(value)
     raise ValueError(value)
+
+
+def _parse_optional_int(value: str) -> int | None:
+    text = value.strip()
+    if not text:
+        return None
+    if not text.isdigit():
+        raise ValueError(value)
+    amount = int(text)
+    return amount if amount >= 1 else None
 
 
 def build_settings_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Embed:
@@ -145,7 +164,10 @@ def build_menu_editor_embed(bot: commands.Bot, menu: dict) -> discord.Embed:
             role = guild.get_role(int(role_spec["role_id"]))
             label = role_spec.get("label") or (role.name if role else role_spec["role_id"])
             emoji = role_spec.get("emoji") if is_valid_emoji(role_spec.get("emoji")) else None
-            lines.append(f"{emoji} **{label}**" if emoji else f"• **{label}**")
+            limit = role_spec.get("limit")
+            suffix = f" · max {limit}" if limit else ""
+            line = f"{emoji} **{label}**{suffix}" if emoji else f"• **{label}**{suffix}"
+            lines.append(line)
     embed.add_field(name="Roles", value="\n".join(lines) or "none", inline=False)
     appearance = embed_spec.get("title") or "*no title*"
     if embed_spec.get("description"):
@@ -239,9 +261,10 @@ class _RoleForInviteSelect(discord.ui.RoleSelect):
 class _RemoveInviteSelect(discord.ui.Select):
     def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
         options = []
-        for code, role_id in bot.guild_config(guild.id).get("join", {}).get("invites", {}).items():
-            role = guild.get_role(int(role_id)) if guild else None
-            label = f"{code} -> {role.name}" if role else f"{code} -> {role_id}"
+        for code, spec in bot.guild_config(guild.id).get("join", {}).get("invites", {}).items():
+            role_id = spec if isinstance(spec, str) else spec.get("role_id")
+            role = guild.get_role(int(role_id)) if role_id else None
+            label = f"{code} -> {role.name if role else role_id}"
             options.append(discord.SelectOption(label=label[:100], value=code))
         super().__init__(placeholder="Remove an invite mapping", options=options[:25])
         self.bot = bot
@@ -258,6 +281,74 @@ class _RemoveInviteSelect(discord.ui.Select):
         )
         if not saved:
             await interaction.followup.send(_SAVE_FAILED, ephemeral=True)
+
+
+class InviteLimitModal(discord.ui.Modal):
+    def __init__(self, bot: commands.Bot, guild: discord.Guild, code: str) -> None:
+        super().__init__(title=f"Limits for invite {code}"[:45])
+        self.bot = bot
+        self.guild = guild
+        self.code = code
+        spec = bot.guild_config(guild.id).get("join", {}).get("invites", {}).get(code)
+        if not isinstance(spec, dict):
+            spec = {}
+        self.max_input = discord.ui.TextInput(
+            label="Max uses (0 = unlimited)",
+            required=False,
+            max_length=9,
+            default=str(spec["max_uses"]) if spec.get("max_uses") else None,
+        )
+        self.window_input = discord.ui.TextInput(
+            label="Grant role within days (0 = always)",
+            required=False,
+            max_length=9,
+            default=str(spec["within_days"]) if spec.get("within_days") else None,
+        )
+        self.add_item(self.max_input)
+        self.add_item(self.window_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            max_uses = _parse_optional_int(self.max_input.value)
+            window_days = _parse_optional_int(self.window_input.value)
+        except ValueError:
+            await interaction.response.send_message("Limits must be whole numbers (days/uses).", ephemeral=True)
+            return
+
+        invites = self.bot.guild_config(self.guild.id).setdefault("join", {}).setdefault("invites", {})
+        raw = invites.get(self.code)
+        spec = dict(raw) if isinstance(raw, dict) else {"role_id": raw}
+        for field, value in (("max_uses", max_uses), ("within_days", window_days)):
+            if value is None:
+                spec.pop(field, None)
+            else:
+                spec[field] = value
+        invites[self.code] = spec
+
+        saved = self.bot.save_config()
+        invites_list = await _fetch_invites(interaction.guild)
+        await interaction.response.edit_message(
+            embed=build_invites_embed(self.bot, interaction.guild),
+            view=InviteRolesView(self.bot, invites_list, self.guild),
+        )
+        if not saved:
+            await interaction.followup.send(_SAVE_FAILED, ephemeral=True)
+
+
+class _LimitInviteSelect(discord.ui.Select):
+    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
+        options = []
+        for code, spec in bot.guild_config(guild.id).get("join", {}).get("invites", {}).items():
+            role_id = spec if isinstance(spec, str) else spec.get("role_id")
+            role = guild.get_role(int(role_id)) if role_id else None
+            label = f"{code} -> {role.name if role else role_id}"
+            options.append(discord.SelectOption(label=label[:100], value=code))
+        super().__init__(placeholder="Limit an invite's role", options=options[:25])
+        self.bot = bot
+        self.guild = guild
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(InviteLimitModal(self.bot, self.guild, self.values[0]))
 
 
 class _BackToSettingsButton(discord.ui.Button):
@@ -289,6 +380,7 @@ class InviteRolesView(discord.ui.View):
             if invites:
                 self.add_item(_InviteSelect(bot, invites))
             if bot.guild_config(guild.id).get("join", {}).get("invites"):
+                self.add_item(_LimitInviteSelect(bot, guild))
                 self.add_item(_RemoveInviteSelect(bot, guild))
         self.add_item(_BackToSettingsButton(bot))
 
@@ -323,8 +415,16 @@ class RoleCustomizeModal(discord.ui.Modal):
             max_length=80,
             default=current.get("label"),
         )
+        self.limit_input = discord.ui.TextInput(
+            label="Max members (0 = unlimited)",
+            required=False,
+            placeholder="0 for no limit",
+            max_length=9,
+            default=str(current["limit"]) if current.get("limit") else None,
+        )
         self.add_item(self.emoji_input)
         self.add_item(self.label_input)
+        self.add_item(self.limit_input)
 
     async def _finish(self, interaction: discord.Interaction, saved: bool) -> None:
         cog = self.bot.get_cog("ReactionRoles")
@@ -353,6 +453,11 @@ class RoleCustomizeModal(discord.ui.Modal):
                 ephemeral=True,
             )
             return
+        try:
+            limit = _parse_optional_int(self.limit_input.value)
+        except ValueError:
+            await interaction.response.send_message("The member limit must be a whole number.", ephemeral=True)
+            return
 
         roles = self.menu.setdefault("roles", [])
         spec = next((item for item in roles if str(item["role_id"]) == str(self.role.id)), None)
@@ -367,6 +472,10 @@ class RoleCustomizeModal(discord.ui.Modal):
             spec["emoji"] = emoji
         else:
             spec.pop("emoji", None)
+        if limit is None:
+            spec.pop("limit", None)
+        else:
+            spec["limit"] = limit
 
         saved = self.bot.save_config()
         await self._finish(interaction, saved)
@@ -381,7 +490,11 @@ class MenuAppearanceModal(discord.ui.Modal):
         spec = menu.get("embed") or {}
         color = spec.get("color")
         self.title_input = discord.ui.TextInput(
-            label="Title", required=False, max_length=256, default=spec.get("title")
+            label="Title",
+            required=False,
+            max_length=256,
+            default=spec.get("title"),
+            placeholder="Text shown above the buttons",
         )
         self.desc_input = discord.ui.TextInput(
             label="Description",
@@ -389,6 +502,7 @@ class MenuAppearanceModal(discord.ui.Modal):
             required=False,
             max_length=4000,
             default=spec.get("description"),
+            placeholder="Inline links: type #rules, @Moderator or @alice",
         )
         self.color_input = discord.ui.TextInput(
             label="Color (#RRGGBB)",

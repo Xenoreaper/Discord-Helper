@@ -59,6 +59,9 @@ def _validate_roles(roles, path: str) -> None:
     for i, item in enumerate(roles):
         if not isinstance(item, dict) or not _is_id(item.get("role_id")):
             raise SystemExit(f'config.json "{path}[{i}].role_id" must be a numeric role ID.')
+        limit = item.get("limit")
+        if limit is not None and (isinstance(limit, bool) or not isinstance(limit, int) or limit < 1):
+            raise SystemExit(f'config.json "{path}[{i}].limit" must be a positive integer or null.')
 
 
 def validate_config(config: dict) -> None:
@@ -86,7 +89,8 @@ def validate_config(config: dict) -> None:
         raise SystemExit('config.json "join.base_role_id" must be a numeric role ID or null.')
 
     invites = join.setdefault("invites", {})
-    for code, role_id in invites.items():
+    for code, spec in invites.items():
+        role_id = spec if isinstance(spec, str) else (spec.get("role_id") if isinstance(spec, dict) else None)
         if str(code).isdigit() and not _is_id(role_id):
             raise SystemExit(
                 'config.json "join.invites" looks swapped: the key '
@@ -95,9 +99,16 @@ def validate_config(config: dict) -> None:
             )
         if not _is_id(role_id):
             raise SystemExit(
-                f'config.json join.invites["{code}"] must be a numeric role ID. '
+                f'config.json join.invites["{code}"] must map to a numeric role ID. '
                 'The key must be the invite code (like "GC53JhrDF").'
             )
+        if isinstance(spec, dict):
+            for field in ("max_uses", "within_days", "used"):
+                value = spec.get(field)
+                if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+                    raise SystemExit(
+                        f'config.json join.invites["{code}"].{field} must be a non-negative integer or null.'
+                    )
 
     _migrate_role_menu(config)
 
