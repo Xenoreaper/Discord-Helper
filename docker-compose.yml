@@ -1,6 +1,10 @@
 services:
   bot:
-    build: .
+    build:
+      context: .
+      args:
+        UID: ${PUID:-1000}
+        GID: ${PGID:-1000}
     image: rolebot:latest
     container_name: rolebot
     restart: unless-stopped
