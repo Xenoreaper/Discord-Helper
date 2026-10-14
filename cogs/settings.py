@@ -218,7 +218,7 @@ async def _fetch_invites(guild: discord.Guild) -> list[discord.Invite]:
 
 
 class _InviteSelect(discord.ui.Select):
-    def __init__(self, bot: commands.Bot, invites: list[discord.Invite]) -> None:
+    def __init__(self, bot: commands.Bot, invites: list[discord.Invite], guild: discord.Guild) -> None:
         options = []
         for invite in invites[:25]:
             inviter = invite.inviter
@@ -226,22 +226,25 @@ class _InviteSelect(discord.ui.Select):
             options.append(discord.SelectOption(label=label[:100], value=invite.code))
         super().__init__(placeholder="Select an invite to map to a role", options=options)
         self.bot = bot
+        self.invites = invites
+        self.guild = guild
 
-async def callback(self, interaction: discord.Interaction) -> None:
-        code = self.values[0]
-        invites = await _fetch_invites(interaction.guild)
+    async def callback(self, interaction: discord.Interaction) -> None:
         await interaction.response.edit_message(
-            embed=build_invites_embed(self.bot, interaction.guild),
-            view=InviteRolesView(self.bot, invites, interaction.guild, pending_invite=code),
+            embed=build_invites_embed(self.bot, self.guild),
+            view=InviteRolesView(self.bot, self.invites, self.guild, pending_invite=self.values[0]),
         )
 
 
 class _RoleForInviteSelect(discord.ui.RoleSelect):
-    def __init__(self, bot: commands.Bot, code: str, guild: discord.Guild) -> None:
+    def __init__(
+        self, bot: commands.Bot, code: str, guild: discord.Guild, invites: list[discord.Invite]
+    ) -> None:
         super().__init__(placeholder=f"Pick the role for invite {code}", min_values=1, max_values=1)
         self.bot = bot
         self.code = code
         self.guild = guild
+        self.invites = invites
 
     async def callback(self, interaction: discord.Interaction) -> None:
         role = self.values[0]
@@ -249,17 +252,16 @@ class _RoleForInviteSelect(discord.ui.RoleSelect):
             self.code
         ] = str(role.id)
         saved = self.bot.save_config()
-        invites = await _fetch_invites(interaction.guild)
         await interaction.response.edit_message(
-            embed=build_invites_embed(self.bot, interaction.guild),
-            view=InviteRolesView(self.bot, invites, guild=self.guild),
+            embed=build_invites_embed(self.bot, self.guild),
+            view=InviteRolesView(self.bot, self.invites, self.guild),
         )
         if not saved:
             await interaction.followup.send(_SAVE_FAILED, ephemeral=True)
 
 
 class _RemoveInviteSelect(discord.ui.Select):
-    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
+    def __init__(self, bot: commands.Bot, guild: discord.Guild, invites: list[discord.Invite]) -> None:
         options = []
         for code, spec in bot.guild_config(guild.id).get("join", {}).get("invites", {}).items():
             role_id = spec if isinstance(spec, str) else spec.get("role_id")
@@ -269,26 +271,29 @@ class _RemoveInviteSelect(discord.ui.Select):
         super().__init__(placeholder="Remove an invite mapping", options=options[:25])
         self.bot = bot
         self.guild = guild
+        self.invites = invites
 
     async def callback(self, interaction: discord.Interaction) -> None:
         code = self.values[0]
         self.bot.guild_config(self.guild.id).get("join", {}).get("invites", {}).pop(code, None)
         saved = self.bot.save_config()
-        invites = await _fetch_invites(interaction.guild)
         await interaction.response.edit_message(
-            embed=build_invites_embed(self.bot, interaction.guild),
-            view=InviteRolesView(self.bot, invites, guild=self.guild),
+            embed=build_invites_embed(self.bot, self.guild),
+            view=InviteRolesView(self.bot, self.invites, self.guild),
         )
         if not saved:
             await interaction.followup.send(_SAVE_FAILED, ephemeral=True)
 
 
 class InviteLimitModal(discord.ui.Modal):
-    def __init__(self, bot: commands.Bot, guild: discord.Guild, code: str) -> None:
+    def __init__(
+        self, bot: commands.Bot, guild: discord.Guild, code: str, invites: list[discord.Invite]
+    ) -> None:
         super().__init__(title=f"Limits for invite {code}"[:45])
         self.bot = bot
         self.guild = guild
         self.code = code
+        self.invites = invites
         spec = bot.guild_config(guild.id).get("join", {}).get("invites", {}).get(code)
         if not isinstance(spec, dict):
             spec = {}
@@ -326,17 +331,16 @@ class InviteLimitModal(discord.ui.Modal):
         invites[self.code] = spec
 
         saved = self.bot.save_config()
-        invites_list = await _fetch_invites(interaction.guild)
         await interaction.response.edit_message(
-            embed=build_invites_embed(self.bot, interaction.guild),
-            view=InviteRolesView(self.bot, invites_list, self.guild),
+            embed=build_invites_embed(self.bot, self.guild),
+            view=InviteRolesView(self.bot, self.invites, self.guild),
         )
         if not saved:
             await interaction.followup.send(_SAVE_FAILED, ephemeral=True)
 
 
 class _LimitInviteSelect(discord.ui.Select):
-    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
+    def __init__(self, bot: commands.Bot, guild: discord.Guild, invites: list[discord.Invite]) -> None:
         options = []
         for code, spec in bot.guild_config(guild.id).get("join", {}).get("invites", {}).items():
             role_id = spec if isinstance(spec, str) else spec.get("role_id")
@@ -346,9 +350,12 @@ class _LimitInviteSelect(discord.ui.Select):
         super().__init__(placeholder="Limit an invite's role", options=options[:25])
         self.bot = bot
         self.guild = guild
+        self.invites = invites
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(InviteLimitModal(self.bot, self.guild, self.values[0]))
+        await interaction.response.send_modal(
+            InviteLimitModal(self.bot, self.guild, self.values[0], self.invites)
+        )
 
 
 class _BackToSettingsButton(discord.ui.Button):
@@ -375,13 +382,13 @@ class InviteRolesView(discord.ui.View):
         self.bot = bot
         self.guild = guild
         if pending_invite is not None:
-            self.add_item(_RoleForInviteSelect(bot, pending_invite, guild))
+            self.add_item(_RoleForInviteSelect(bot, pending_invite, guild, invites))
         else:
             if invites:
-                self.add_item(_InviteSelect(bot, invites))
+                self.add_item(_InviteSelect(bot, invites, guild))
             if bot.guild_config(guild.id).get("join", {}).get("invites"):
-                self.add_item(_LimitInviteSelect(bot, guild))
-                self.add_item(_RemoveInviteSelect(bot, guild))
+                self.add_item(_LimitInviteSelect(bot, guild, invites))
+                self.add_item(_RemoveInviteSelect(bot, guild, invites))
         self.add_item(_BackToSettingsButton(bot))
 
 
