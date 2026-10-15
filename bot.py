@@ -159,12 +159,12 @@ def _validate_easter_eggs(config: dict) -> None:
     easter_eggs = config.setdefault("easter_eggs", {})
     if not isinstance(easter_eggs, dict):
         raise SystemExit('config.json "easter_eggs" must be an object.')
-    gif_url = easter_eggs.get("hello_there_gif")
-    if gif_url not in (None, "") and not isinstance(gif_url, str):
-        raise SystemExit('config.json "easter_eggs.hello_there_gif" must be a string URL or null.')
-    enabled = easter_eggs.get("enabled")
-    if enabled is not None and not isinstance(enabled, bool):
-        raise SystemExit('config.json "easter_eggs.enabled" must be a boolean or null.')
+    for key, value in easter_eggs.items():
+        if key == "enabled":
+            if value is not None and not isinstance(value, bool):
+                raise SystemExit('config.json "easter_eggs.enabled" must be a boolean or null.')
+        elif value is not None and not isinstance(value, str):
+            raise SystemExit(f'config.json "easter_eggs.{key}" must be a string or null.')
 
 
 def _migrate_legacy(store: dict) -> None:

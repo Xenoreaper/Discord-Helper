@@ -1,4 +1,5 @@
 import logging
+from typing import NamedTuple
 
 import discord
 from discord.ext import commands
@@ -7,6 +8,19 @@ log = logging.getLogger("rolebot.easter_eggs")
 
 GRIEVOUS_GIF = "https://klipy.com/gifs/star-wars-general-grievous-9"
 DRG_GOLD_GIF = "https://klipy.com/gifs/rich-compressed-gold"
+
+
+class EasterEgg(NamedTuple):
+    trigger: str
+    response: str
+    config_key: str | None = None
+
+
+EASTER_EGGS = (
+    EasterEgg("hello there", GRIEVOUS_GIF, config_key="hello_there_gif"),
+    EasterEgg("sand", "I don't like sand."),
+    EasterEgg("gold", DRG_GOLD_GIF, config_key="were_rich_gif"),
+)
 
 
 class EasterEggs(commands.Cog):
@@ -25,28 +39,18 @@ class EasterEggs(commands.Cog):
             return
 
         content = (message.content or "").lower()
-        if "hello there" in content:
-            await self._greet(message)
-        if "sand" in content:
-            try:
-                await message.reply("I don't like sand.", mention_author=False)
-            except discord.HTTPException:
-                log.warning("Could not reply with the sand easter egg in %s", message.channel, exc_info=True)
-        if "gold" in content:
-            easter_eggs = self.bot.guild_config(message.guild.id).get("easter_eggs") or {}
-            gif_url = easter_eggs.get("were_rich_gif") or DRG_GOLD_GIF
-            try:
-                await message.reply(gif_url, mention_author=False)
-            except discord.HTTPException:
-                log.warning("Could not reply with the hello-there easter egg in %s", message.channel, exc_info=True)
+        for egg in EASTER_EGGS:
+            if egg.trigger in content:
+                await self._respond(message, egg, easter_eggs)
 
-    async def _greet(self, message: discord.Message) -> None:
-        easter_eggs = self.bot.guild_config(message.guild.id).get("easter_eggs") or {}
-        gif_url = easter_eggs.get("hello_there_gif") or GRIEVOUS_GIF
+    async def _respond(self, message: discord.Message, egg: EasterEgg, config: dict) -> None:
+        response = egg.response
+        if egg.config_key:
+            response = config.get(egg.config_key) or response
         try:
-            await message.reply(gif_url, mention_author=False)
+            await message.reply(response, mention_author=False)
         except discord.HTTPException:
-            log.warning("Could not reply with the hello-there easter egg in %s", message.channel, exc_info=True)
+            log.warning("Could not send the %r easter egg in %s", egg.trigger, message.channel, exc_info=True)
 
 
 async def setup(bot: commands.Bot) -> None:
