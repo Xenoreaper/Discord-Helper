@@ -21,6 +21,7 @@ def _is_id(value) -> bool:
 def default_guild_config() -> dict:
     return {
         "kick_channel_id": None,
+        "kick_action": "kick",
         "log_channel_id": None,
         "kick_exempt_roles": [],
         "admin_roles": [],
@@ -69,6 +70,10 @@ def validate_config(config: dict) -> None:
         value = config.get(key)
         if value not in (None, "") and not _is_id(value):
             raise SystemExit(f'config.json "{key}" must be a numeric channel ID or null.')
+
+    action = config.get("kick_action")
+    if action not in (None, "kick", "ban"):
+        raise SystemExit('config.json "kick_action" must be "kick" or "ban".')
 
     exempt_roles = config.setdefault("kick_exempt_roles", [])
     if not isinstance(exempt_roles, list):
@@ -168,7 +173,7 @@ def _migrate_legacy(store: dict) -> None:
     gid = str(store.pop("guild_id"))
     config = {
         key: store.pop(key)
-        for key in ("kick_channel_id", "log_channel_id", "kick_exempt_roles", "join", "role_menus")
+        for key in ("kick_channel_id", "kick_action", "log_channel_id", "kick_exempt_roles", "join", "role_menus")
         if key in store
     }
     validate_config(config)

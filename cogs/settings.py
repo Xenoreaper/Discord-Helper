@@ -103,8 +103,13 @@ def build_settings_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Emb
     config = bot.guild_config(guild.id)
     join = config.get("join", {})
     embed = discord.Embed(title="Server Settings", color=0x5865F2)
-    embed.add_field(name="Kick channel", value=_channel_mention(bot, config.get("kick_channel_id")), inline=False)
-    embed.add_field(name="Admin log channel", value=_channel_mention(bot, config.get("log_channel_id")), inline=False)
+    embed.add_field(name="No-Chat channel", value=_channel_mention(bot, config.get("kick_channel_id")), inline=False)
+    embed.add_field(
+        name="No-chat punishment",
+        value="ban" if (config.get("kick_action") or "kick") == "ban" else "kick",
+        inline=False,
+    )
+    embed.add_field(name="Log channel", value=_channel_mention(bot, config.get("log_channel_id")), inline=False)
     embed.add_field(name="Bot admin roles", value=_role_list_text(bot, guild, "admin_roles"), inline=False)
     embed.add_field(name="Kick-exempt roles", value=_exempt_roles_text(bot, guild), inline=False)
     embed.add_field(name="Default role (on join)", value=_role_mention(guild, join.get("base_role_id")), inline=False)
@@ -982,12 +987,33 @@ class _EasterEggsToggleButton(discord.ui.Button):
         await interaction.response.edit_message(embed=embed, view=SettingsPanelView(self.bot, interaction.guild))
 
 
+class _NoChatActionToggleButton(discord.ui.Button):
+    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
+        is_ban = (bot.guild_config(guild.id).get("kick_action") or "kick") == "ban"
+        super().__init__(
+            label=f"No-chat: {'ban' if is_ban else 'kick'}",
+            style=discord.ButtonStyle.danger if is_ban else discord.ButtonStyle.secondary,
+            row=3,
+        )
+        self.bot = bot
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        config = self.bot.guild_config(interaction.guild.id)
+        config["kick_action"] = "kick" if (config.get("kick_action") or "kick") == "ban" else "ban"
+        saved = self.bot.save_config()
+        embed = build_settings_embed(self.bot, interaction.guild)
+        if not saved:
+            embed.add_field(name="Warning", value=_SAVE_FAILED, inline=False)
+        await interaction.response.edit_message(embed=embed, view=SettingsPanelView(self.bot, interaction.guild))
+
+
 class SettingsPanelView(discord.ui.View):
     def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
         super().__init__(timeout=900)
         self.bot = bot
         self.guild = guild
         self.add_item(_EasterEggsToggleButton(bot, guild))
+        self.add_item(_NoChatActionToggleButton(bot, guild))
 
     async def _refresh(self, interaction: discord.Interaction, saved: bool = True) -> None:
         embed = build_settings_embed(self.bot, interaction.guild)

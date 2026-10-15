@@ -6,6 +6,7 @@ from discord.ext import commands
 log = logging.getLogger("rolebot.easter_eggs")
 
 GRIEVOUS_GIF = "https://klipy.com/gifs/star-wars-general-grievous-9"
+DRG_GOLD_GIF = "https://klipy.com/gifs/rich-compressed-gold"
 
 
 class EasterEggs(commands.Cog):
@@ -31,6 +32,13 @@ class EasterEggs(commands.Cog):
                 await message.reply("I don't like sand.", mention_author=False)
             except discord.HTTPException:
                 log.warning("Could not reply with the sand easter egg in %s", message.channel, exc_info=True)
+        if "gold" in content:
+            easter_eggs = self.bot.guild_config(message.guild.id).get("easter_eggs") or {}
+            gif_url = easter_eggs.get("were_rich_gif") or DRG_GOLD_GIF
+            try:
+                await message.reply(gif_url, mention_author=False)
+            except discord.HTTPException:
+                log.warning("Could not reply with the hello-there easter egg in %s", message.channel, exc_info=True)
 
     async def _greet(self, message: discord.Message) -> None:
         easter_eggs = self.bot.guild_config(message.guild.id).get("easter_eggs") or {}
