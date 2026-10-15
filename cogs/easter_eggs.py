@@ -6,9 +6,6 @@ from discord.ext import commands
 
 log = logging.getLogger("rolebot.easter_eggs")
 
-GRIEVOUS_GIF = "https://klipy.com/gifs/star-wars-general-grievous-9"
-DRG_GOLD_GIF = "https://klipy.com/gifs/rich-compressed-gold"
-
 
 class EasterEgg(NamedTuple):
     trigger: str
@@ -17,9 +14,9 @@ class EasterEgg(NamedTuple):
 
 
 EASTER_EGGS = (
-    EasterEgg("hello there", GRIEVOUS_GIF, config_key="hello_there_gif"),
+    EasterEgg("hello there", "https://klipy.com/gifs/star-wars-general-grievous-9", config_key="hello_there_gif"),
     EasterEgg("sand", "I don't like sand."),
-    EasterEgg("gold", DRG_GOLD_GIF, config_key="were_rich_gif"),
+    EasterEgg("gold", "https://klipy.com/gifs/rich-compressed-gold", config_key="were_rich_gif"),
 )
 
 
