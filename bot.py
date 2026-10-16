@@ -9,6 +9,7 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 from config_store import ConfigStore
+from webapp import start_webapp, stop_webapp
 
 BASE_DIR = Path(__file__).resolve().parent
 log = logging.getLogger("rolebot")
@@ -202,6 +203,7 @@ class RoleBot(commands.Bot):
         self.store = ConfigStore(BASE_DIR / "config.json")
         validate_store(self.store.data)
         self.configs: dict = self.store.data.setdefault("servers", {})
+        self.web_runner = None
 
     def guild_config(self, guild_id) -> dict:
         key = str(guild_id)
@@ -227,6 +229,11 @@ class RoleBot(commands.Bot):
 
         await self.tree.sync()
         log.info("Synced app commands globally (available in every server)")
+        self.web_runner = await start_webapp(self)
+
+    async def close(self) -> None:
+        await stop_webapp(self.web_runner)
+        await super().close()
 
     async def on_ready(self) -> None:
         log.info("Logged in as %s", self.user)

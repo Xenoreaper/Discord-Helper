@@ -1,0 +1,131 @@
+:root {
+  --bg: #1e1f22;
+  --card: #2b2d31;
+  --field: #1e1f22;
+  --border: #3f4147;
+  --text: #dbdee1;
+  --muted: #949ba4;
+  --blurple: #5865f2;
+  --danger: #da373c;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 system-ui, "Segoe UI", Roboto, sans-serif;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand { color: var(--text); font-weight: 700; text-decoration: none; font-size: 18px; }
+.who { display: flex; align-items: center; gap: 12px; }
+
+main { max-width: 960px; margin: 0 auto; padding: 24px; }
+
+h1 { font-size: 22px; }
+h2 { font-size: 17px; margin: 0 0 16px; }
+
+.muted { color: var(--muted); }
+.center { text-align: center; }
+.narrow { max-width: 420px; margin: 48px auto; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+
+label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+label.inline { flex-direction: row; align-items: center; gap: 8px; }
+
+input, select, textarea {
+  background: var(--field);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  padding: 8px 10px;
+  font: inherit;
+}
+
+select[multiple] { min-height: 120px; }
+
+button, .button {
+  border: none;
+  border-radius: 5px;
+  padding: 9px 16px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+  width: fit-content;
+}
+
+.primary { background: var(--blurple); color: #fff; }
+.secondary { background: #4e5058; color: #fff; }
+.danger { background: var(--danger); color: #fff; }
+.link { background: none; color: var(--muted); padding: 0; }
+
+.guild-list { list-style: none; padding: 0; display: grid; gap: 8px; }
+.guild-list a {
+  display: block;
+  padding: 14px 16px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  text-decoration: none;
+}
+.guild-list a:hover { border-color: var(--blurple); }
+
+table.rows { width: 100%; border-collapse: collapse; }
+table.rows th { text-align: left; font-size: 12px; color: var(--muted); padding: 4px 6px; }
+table.rows td { padding: 4px 6px; }
+table.rows input, table.rows select { width: 100%; }
+
+fieldset.menu {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 0 0 16px;
+}
+fieldset.menu legend { padding: 0 6px; font-weight: 600; }
+
+.row-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+.savebar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0;
+  background: linear-gradient(transparent, var(--bg) 40%);
+}
+
+.flash {
+  background: #2d3b2f;
+  border: 1px solid #3f5f45;
+  color: #c7e8cd;
+  padding: 10px 14px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+}
+
+.guild-head nav { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+.guild-head nav a { color: var(--blurple); text-decoration: none; }

@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY bot.py config_store.py emoji_utils.py config.json ./
 COPY cogs ./cogs
+COPY webapp ./webapp
 
 # Create the runtime user with a UID/GID that matches the host owner of the
 # bind-mounted config.json, so the bot can write it. Override at build time:

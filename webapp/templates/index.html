@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}RoleBot — servers{% endblock %}
+{% block content %}
+{% if not user %}
+  <section class="card narrow center">
+    <h1>RoleBot configuration</h1>
+    <p class="muted">Sign in with Discord to configure the servers you manage.</p>
+    <a class="button primary" href="{{ login_url }}">Log in with Discord</a>
+  </section>
+{% else %}
+  <h1>Your servers</h1>
+  {% if guilds %}
+    <ul class="guild-list">
+      {% for guild_id, name in guilds %}
+        <li><a href="/guild/{{ guild_id }}">{{ name }}</a></li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">You don't manage any server that RoleBot is in. Invite the bot or ask an admin for access.</p>
+  {% endif %}
+{% endif %}
+{% endblock %}

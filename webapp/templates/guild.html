@@ -1,0 +1,291 @@
+{% extends "base.html" %}
+{% block title %}{{ guild.name }} — RoleBot{% endblock %}
+{% block content %}
+<div class="guild-head">
+  <h1>{{ guild.name }}</h1>
+  <nav class="muted">
+    {% for guild_id, name in guilds %}
+      {% if guild_id == guild.id|string %}<strong>{{ name }}</strong>{% else %}<a href="/guild/{{ guild_id }}">{{ name }}</a>{% endif %}
+    {% endfor %}
+  </nav>
+</div>
+
+<form method="post" action="/guild/{{ guild.id }}" class="settings">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+
+  <section class="card">
+    <h2>Channels &amp; punishment</h2>
+    <div class="grid">
+      <label>No-chat / kick channel
+        <select name="kick_channel">
+          <option value="">— none —</option>
+          {% for c in channels %}
+            <option value="{{ c.id }}" {% if config.get('kick_channel_id') == c.id|string %}selected{% endif %}>#{{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Punishment for posting there
+        <select name="kick_action">
+          <option value="kick" {% if (config.get('kick_action') or 'kick') == 'kick' %}selected{% endif %}>Kick</option>
+          <option value="ban" {% if config.get('kick_action') == 'ban' %}selected{% endif %}>Ban</option>
+        </select>
+      </label>
+      <label>Admin log channel
+        <select name="log_channel">
+          <option value="">— none —</option>
+          {% for c in channels %}
+            <option value="{{ c.id }}" {% if config.get('log_channel_id') == c.id|string %}selected{% endif %}>#{{ c.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Roles</h2>
+    <div class="grid">
+      <label>Default role (on join)
+        <select name="base_role">
+          <option value="">— none —</option>
+          {% for r in roles %}
+            <option value="{{ r.id }}" {% if config.get('join', {}).get('base_role_id') == r.id|string %}selected{% endif %}>{{ r.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Bot admin roles
+        <select name="admin_roles" multiple size="6">
+          {% for r in roles %}
+            <option value="{{ r.id }}" {% if r.id|string in config.get('admin_roles', []) %}selected{% endif %}>{{ r.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Kick-exempt roles
+        <select name="kick_exempt_roles" multiple size="6">
+          {% for r in roles %}
+            <option value="{{ r.id }}" {% if r.id|string in config.get('kick_exempt_roles', []) %}selected{% endif %}>{{ r.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Easter eggs</h2>
+    <input type="checkbox" name="easter_enabled" {% if easter.get('enabled', True) %}checked{% endif %}>
+  </section>
+
+  <section class="card">
+    <h2>Invite roles</h2>
+    <p class="muted">When someone joins through an invite code, give them the mapped role.</p>
+    <table class="rows" id="invites">
+      <thead><tr><th>Invite</th><th>Role</th><th>Max uses</th><th>Within days</th><th>Used</th><th></th></tr></thead>
+      <tbody>
+        {% for inv in invites %}
+        <tr>
+          <td>
+            <select name="invite_code">
+              <option value="">— invite —</option>
+              {% if inv.code and inv.code not in invite_codes %}
+                <option value="{{ inv.code }}" selected>{{ inv.code }} (not active)</option>
+              {% endif %}
+              {% for opt in invite_options %}
+                <option value="{{ opt.code }}" {% if opt.code == inv.code %}selected{% endif %}>{{ opt.label }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td>
+            <select name="invite_role">
+              <option value="">— role —</option>
+              {% for r in roles %}
+                <option value="{{ r.id }}" {% if inv.role_id|string == r.id|string %}selected{% endif %}>{{ r.name }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td><input name="invite_max" value="{{ inv.max_uses }}" size="5"></td>
+          <td><input name="invite_days" value="{{ inv.within_days }}" size="5"></td>
+          <td><input name="invite_used" value="{{ inv.used }}" size="5"></td>
+          <td><button type="button" class="remove-row" title="Remove">✕</button></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <button type="button" id="add-invite" class="secondary">Add invite</button>
+  </section>
+
+  <section class="card">
+    <h2>Role menus</h2>
+    <p class="muted">Each menu is one message with buttons. Field changes update the posted message when you save.</p>
+    <div id="menus">
+      {% for menu in menus %}
+        {% set i = loop.index0 %}
+        {% set embed = menu.get('embed', {}) %}
+        <fieldset class="menu" data-menu-index="{{ i }}">
+          <legend>{{ menu.get('name') or menu.get('id') }}</legend>
+          <input type="hidden" name="menu_{{ i }}_id" value="{{ menu.get('id', '') }}">
+          <input type="hidden" name="menu_{{ i }}_message_id" value="{{ menu.get('message_id') or '' }}">
+          <div class="grid">
+            <label>Name <input name="menu_{{ i }}_name" value="{{ menu.get('name', '') }}"></label>
+            <label>Channel
+              <select name="menu_{{ i }}_channel">
+                <option value="">— none —</option>
+                {% for c in channels %}
+                  <option value="{{ c.id }}" {% if menu.get('channel_id') == c.id|string %}selected{% endif %}>#{{ c.name }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>Embed title <input name="menu_{{ i }}_title" value="{{ embed.get('title', '') }}"></label>
+            <label>Color <input name="menu_{{ i }}_color" value="{{ '#%06X'|format(embed.get('color') or 0x5865F2) }}" size="9"></label>
+          </div>
+          <label>Embed description
+            <textarea name="menu_{{ i }}_description" rows="3">{{ embed.get('description', '') }}</textarea>
+          </label>
+          <label>Embed footer <input name="menu_{{ i }}_footer" value="{{ embed.get('footer', '') }}"></label>
+          <table class="rows menu-roles">
+            <thead><tr><th>Role</th><th>Label</th><th>Emoji</th><th>Limit</th><th></th></tr></thead>
+            <tbody>
+              {% for rs in menu.get('roles', []) %}
+                {% set j = loop.index0 %}
+                <tr>
+                  <td>
+                    <select name="menu_{{ i }}_role_{{ j }}_id">
+                      <option value="">— role —</option>
+                      {% for r in roles %}
+                        <option value="{{ r.id }}" {% if rs.get('role_id')|string == r.id|string %}selected{% endif %}>{{ r.name }}</option>
+                      {% endfor %}
+                    </select>
+                  </td>
+                  <td><input name="menu_{{ i }}_role_{{ j }}_label" value="{{ rs.get('label', '') }}"></td>
+                  <td><input name="menu_{{ i }}_role_{{ j }}_emoji" value="{{ rs.get('emoji', '') }}" size="4"></td>
+                  <td><input name="menu_{{ i }}_role_{{ j }}_limit" value="{{ rs.get('limit') or '' }}" size="5"></td>
+                  <td><button type="button" class="remove-row" title="Remove">✕</button></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <div class="row-actions">
+            <button type="button" class="add-role secondary">Add role</button>
+            <button type="button" class="remove-menu danger">Remove menu</button>
+          </div>
+        </fieldset>
+      {% endfor %}
+    </div>
+    <button type="button" id="add-menu" class="secondary">Add menu</button>
+  </section>
+
+  <div class="savebar">
+    <label class="inline"><input type="checkbox" name="refresh_menus"> Repost/refresh all menus after saving</label>
+    <button type="submit" class="primary">Save changes</button>
+  </div>
+</form>
+
+<template id="invite-template">
+  <tr>
+    <td>
+      <select name="invite_code">
+        <option value="">— invite —</option>
+        {% for opt in invite_options %}<option value="{{ opt.code }}">{{ opt.label }}</option>{% endfor %}
+      </select>
+    </td>
+    <td>
+      <select name="invite_role">
+        <option value="">— role —</option>
+        {% for r in roles %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
+      </select>
+    </td>
+    <td><input name="invite_max" size="5"></td>
+    <td><input name="invite_days" size="5"></td>
+    <td><input name="invite_used" size="5"></td>
+    <td><button type="button" class="remove-row" title="Remove">✕</button></td>
+  </tr>
+</template>
+
+<template id="role-template">
+  <tr>
+    <td>
+      <select name="menu___I___role___J___id">
+        <option value="">— role —</option>
+        {% for r in roles %}<option value="{{ r.id }}">{{ r.name }}</option>{% endfor %}
+      </select>
+    </td>
+    <td><input name="menu___I___role___J___label"></td>
+    <td><input name="menu___I___role___J___emoji" size="4"></td>
+    <td><input name="menu___I___role___J___limit" size="5"></td>
+    <td><button type="button" class="remove-row" title="Remove">✕</button></td>
+  </tr>
+</template>
+
+<template id="menu-template">
+  <fieldset class="menu" data-menu-index="__I__">
+    <legend>New menu</legend>
+    <input type="hidden" name="menu___I___id" value="">
+    <input type="hidden" name="menu___I___message_id" value="">
+    <div class="grid">
+      <label>Name <input name="menu___I___name"></label>
+      <label>Channel
+        <select name="menu___I___channel">
+          <option value="">— none —</option>
+          {% for c in channels %}<option value="{{ c.id }}">#{{ c.name }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Embed title <input name="menu___I___title"></label>
+      <label>Color <input name="menu___I___color" value="#5865F2" size="9"></label>
+    </div>
+    <label>Embed description <textarea name="menu___I___description" rows="3"></textarea></label>
+    <label>Embed footer <input name="menu___I___footer"></label>
+    <table class="rows menu-roles">
+      <thead><tr><th>Role</th><th>Label</th><th>Emoji</th><th>Limit</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="row-actions">
+      <button type="button" class="add-role secondary">Add role</button>
+      <button type="button" class="remove-menu danger">Remove menu</button>
+    </div>
+  </fieldset>
+</template>
+
+<script>
+  let menuIndex = 1000;
+  let roleIndex = 1000;
+
+  function fillPlaceholders(root, map) {
+    root.querySelectorAll("*").forEach((el) => {
+      for (const attr of [...el.attributes]) {
+        let value = attr.value;
+        for (const [token, replacement] of Object.entries(map)) {
+          value = value.split(token).join(replacement);
+        }
+        if (value !== attr.value) el.setAttribute(attr.name, value);
+      }
+    });
+    return root;
+  }
+
+  function addInvite() {
+    const frag = document.getElementById("invite-template").content.cloneNode(true);
+    document.querySelector("#invites tbody").appendChild(frag);
+  }
+
+  function addMenu() {
+    const frag = document.getElementById("menu-template").content.cloneNode(true);
+    fillPlaceholders(frag, { "__I__": String(menuIndex++) });
+    document.getElementById("menus").appendChild(frag);
+  }
+
+  function addRole(button) {
+    const fieldset = button.closest(".menu");
+    const menuIdx = fieldset.dataset.menuIndex;
+    const frag = document.getElementById("role-template").content.cloneNode(true);
+    fillPlaceholders(frag, { "__I__": menuIdx, "__J__": String(roleIndex++) });
+    fieldset.querySelector(".menu-roles tbody").appendChild(frag);
+  }
+
+  document.addEventListener("click", (event) => {
+    const target = event.target;
+    if (target.id === "add-invite") addInvite();
+    else if (target.id === "add-menu") addMenu();
+    else if (target.classList.contains("add-role")) addRole(target);
+    else if (target.classList.contains("remove-row")) target.closest("tr").remove();
+    else if (target.classList.contains("remove-menu")) target.closest(".menu").remove();
+  });
+</script>
+{% endblock %}
