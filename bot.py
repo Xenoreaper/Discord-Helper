@@ -27,6 +27,7 @@ def default_guild_config() -> dict:
         "admin_roles": [],
         "join": {"base_role_id": None, "invites": {}},
         "role_menus": [],
+        "grant_permissions": {"users": {}, "roles": {}},
         "easter_eggs": {},
     }
 
@@ -88,6 +89,8 @@ def validate_config(config: dict) -> None:
     for i, role_id in enumerate(admin_roles):
         if not _is_id(role_id):
             raise SystemExit(f'config.json "admin_roles[{i}]" must be a numeric role ID or null.')
+
+    _validate_grant_permissions(config)
 
     join = config.setdefault("join", {})
     if not _is_id(join.get("base_role_id")) and join.get("base_role_id") not in (None, ""):
@@ -155,6 +158,31 @@ def validate_config(config: dict) -> None:
         _validate_roles(roles, f"role_menus[{i}].roles")
 
 
+def _validate_grant_permissions(config: dict) -> None:
+    grant = config.setdefault("grant_permissions", {})
+    if not isinstance(grant, dict):
+        raise SystemExit('config.json "grant_permissions" must be an object.')
+    for bucket in ("users", "roles"):
+        entries = grant.setdefault(bucket, {})
+        if not isinstance(entries, dict):
+            raise SystemExit(f'config.json "grant_permissions.{bucket}" must be an object.')
+        for subject_id, role_ids in entries.items():
+            if not _is_id(subject_id):
+                raise SystemExit(
+                    f'config.json "grant_permissions.{bucket}" has a non-numeric ID "{subject_id}".'
+                )
+            if not isinstance(role_ids, list):
+                raise SystemExit(
+                    f'config.json "grant_permissions.{bucket}[\'{subject_id}\']" must be a list of role IDs.'
+                )
+            for i, role_id in enumerate(role_ids):
+                if not _is_id(role_id):
+                    raise SystemExit(
+                        f'config.json "grant_permissions.{bucket}[\'{subject_id}\'][{i}]" '
+                        "must be a numeric role ID."
+                    )
+
+
 def _validate_easter_eggs(config: dict) -> None:
     easter_eggs = config.setdefault("easter_eggs", {})
     if not isinstance(easter_eggs, dict):
@@ -210,6 +238,12 @@ class RoleBot(commands.Bot):
             self.save_config()
         return self.configs[key]
 
+    def is_bot_admin(self, member: discord.Member) -> bool:
+        if member.guild_permissions.administrator:
+            return True
+        admin_roles = self.guild_config(member.guild.id).get("admin_roles", [])
+        return any(member.get_role(int(role_id)) is not None for role_id in admin_roles or [])
+
     def save_config(self) -> bool:
         try:
             self.store.save()
@@ -222,7 +256,14 @@ class RoleBot(commands.Bot):
         return True
 
     async def setup_hook(self) -> None:
-        for extension in ("cogs.reaction_roles", "cogs.join_roles", "cogs.guard", "cogs.settings", "cogs.easter_eggs"):
+        for extension in (
+            "cogs.reaction_roles",
+            "cogs.join_roles",
+            "cogs.guard",
+            "cogs.settings",
+            "cogs.grant",
+            "cogs.easter_eggs",
+        ):
             await self.load_extension(extension)
 
         await self.tree.sync()

@@ -4,6 +4,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from cogs.grant import grant_config, role_grant_problem
 from emoji_utils import MAX_EMOJI_LEN, is_valid_emoji
 
 log = logging.getLogger("rolebot.settings")
@@ -114,6 +115,7 @@ def build_settings_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Emb
     embed.add_field(name="Kick-exempt roles", value=_exempt_roles_text(bot, guild), inline=False)
     embed.add_field(name="Default role (on join)", value=_role_mention(guild, join.get("base_role_id")), inline=False)
     embed.add_field(name="Invite roles", value=_invite_text(bot, guild), inline=False)
+    embed.add_field(name="Grant permissions", value=_grant_summary_text(bot, guild), inline=False)
     menus = config.get("role_menus", [])
     if menus:
         lines = []
@@ -212,6 +214,79 @@ def build_roles_panel_embed(bot: commands.Bot, guild: discord.Guild) -> discord.
         "the channel kick automatically; kick-exempt roles only bypass the kick."
     )
     return embed
+
+
+def _grant_summary_text(bot: commands.Bot, guild: discord.Guild) -> str:
+    grant = bot.guild_config(guild.id).get("grant_permissions", {})
+    users = len(grant.get("users", {}))
+    roles = len(grant.get("roles", {}))
+    if not users and not roles:
+        return "none — only administrators and bot admin roles can grant roles"
+    parts = []
+    if users:
+        parts.append(f"{users} member{'s' if users != 1 else ''}")
+    if roles:
+        parts.append(f"{roles} role{'s' if roles != 1 else ''}")
+    return f"{', '.join(parts)} with custom grants"
+
+
+def _grant_subject_lines(bot: commands.Bot, guild: discord.Guild, bucket: str) -> str:
+    entries = bot.guild_config(guild.id).get("grant_permissions", {}).get(bucket, {})
+    lines = []
+    for subject_id, role_ids in entries.items():
+        if bucket == "users":
+            subject = guild.get_member(int(subject_id))
+        else:
+            subject = guild.get_role(int(subject_id))
+        label = subject.mention if subject else f"`{subject_id}` (not found)"
+        roles = []
+        for role_id in role_ids:
+            role = guild.get_role(int(role_id))
+            roles.append(role.mention if role else f"`{role_id}` (not found)")
+        lines.append(f"{label} → {', '.join(roles) or 'none'}")
+    return "\n".join(lines)[:1024] or "none"
+
+
+def build_grant_permissions_embed(
+    bot: commands.Bot,
+    guild: discord.Guild,
+    subject: discord.Member | discord.Role | None = None,
+    subject_kind: str | None = None,
+) -> discord.Embed:
+    embed = discord.Embed(
+        title="Grant permissions",
+        description=(
+            "Who may use `/grant` to hand out which roles. Administrators and bot admin roles "
+            "don't need an entry — they can grant any role below their own highest role. Pick a "
+            "member or a role below, then choose the roles they are allowed to give."
+        ),
+        color=0x5865F2,
+    )
+    embed.add_field(name="Members", value=_grant_subject_lines(bot, guild, "users"), inline=False)
+    embed.add_field(name="Roles", value=_grant_subject_lines(bot, guild, "roles"), inline=False)
+    if subject is not None:
+        kind = "member" if subject_kind == "user" else "role"
+        embed.add_field(
+            name="Editing",
+            value=f"{subject.mention} ({kind}) — select the roles below and submit (submit empty to remove).",
+            inline=False,
+        )
+    embed.set_footer(text="Everyone can only grant roles below their own highest role.")
+    return embed
+
+
+def _resolve_grant_subject(
+    bot: commands.Bot, guild: discord.Guild, subject_kind: str | None, subject_id: str | None
+) -> tuple[discord.Member | discord.Role | None, discord.Role | None]:
+    if subject_kind == "user" and subject_id:
+        member = guild.get_member(int(subject_id))
+        if member is not None:
+            return member, member.top_role
+    if subject_kind == "role" and subject_id:
+        role = guild.get_role(int(subject_id))
+        if role is not None:
+            return role, role
+    return None, None
 
 
 async def _fetch_invites(guild: discord.Guild) -> list[discord.Invite]:
@@ -1081,6 +1156,13 @@ class SettingsPanelView(discord.ui.View):
             view=RolesPanelView(self.bot, interaction.guild),
         )
 
+    @discord.ui.button(label="Grant permissions", style=discord.ButtonStyle.secondary, row=4)
+    async def grant_permissions(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(
+            embed=build_grant_permissions_embed(self.bot, interaction.guild),
+            view=GrantPermissionsView(self.bot, interaction.guild),
+        )
+
     @discord.ui.button(label="Clear...", style=discord.ButtonStyle.danger, row=4)
     async def clear(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.edit_message(
@@ -1175,6 +1257,144 @@ class RolesPanelView(discord.ui.View):
         )
 
 
+class _GrantMemberSubjectSelect(discord.ui.UserSelect):
+    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
+        super().__init__(placeholder="Edit a member's grantable roles", min_values=1, max_values=1, row=0)
+        self.bot = bot
+        self.guild = guild
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        value = self.values[0]
+        member = value if isinstance(value, discord.Member) else self.guild.get_member(value.id)
+        if member is None:
+            await interaction.response.send_message("That member isn't in this server.", ephemeral=True)
+            return
+        await interaction.response.edit_message(
+            embed=build_grant_permissions_embed(self.bot, self.guild, member, "user"),
+            view=GrantPermissionsView(self.bot, self.guild, "user", str(member.id)),
+        )
+
+
+class _GrantRoleSubjectSelect(discord.ui.RoleSelect):
+    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
+        super().__init__(placeholder="Edit a role's grantable roles", min_values=1, max_values=1, row=1)
+        self.bot = bot
+        self.guild = guild
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        role = self.values[0]
+        await interaction.response.edit_message(
+            embed=build_grant_permissions_embed(self.bot, self.guild, role, "role"),
+            view=GrantPermissionsView(self.bot, self.guild, "role", str(role.id)),
+        )
+
+
+class _GrantRolesSelect(discord.ui.RoleSelect):
+    def __init__(
+        self, bot: commands.Bot, guild: discord.Guild, subject_kind: str | None, subject_id: str | None
+    ) -> None:
+        subject, _ = _resolve_grant_subject(bot, guild, subject_kind, subject_id)
+        default: list[discord.Role] = []
+        if subject is not None:
+            bucket = "users" if subject_kind == "user" else "roles"
+            for role_id in grant_config(bot, guild.id)[bucket].get(str(subject.id), []):
+                role = guild.get_role(int(role_id))
+                if role is not None:
+                    default.append(role)
+        if subject is None:
+            placeholder = "Pick a member or role above first"
+        else:
+            label = subject.display_name if isinstance(subject, discord.Member) else subject.name
+            placeholder = f"Roles {label} may grant"
+        super().__init__(
+            placeholder=placeholder[:150],
+            min_values=0,
+            max_values=25,
+            row=2,
+            default_values=default,
+        )
+        self.bot = bot
+        self.guild = guild
+        self.subject_kind = subject_kind
+        self.subject_id = subject_id
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        subject, top_role = _resolve_grant_subject(self.bot, self.guild, self.subject_kind, self.subject_id)
+        if subject is None or top_role is None:
+            await interaction.response.send_message("Pick a member or a role above first.", ephemeral=True)
+            return
+
+        problems = []
+        for role in self.values:
+            problem = role_grant_problem(role, top_role)
+            if problem is not None:
+                problems.append(f"{role.mention} — {problem}")
+        if problems:
+            await interaction.response.send_message(
+                "Nothing was saved. These roles can't be granted by that subject:\n"
+                + "\n".join(problems)[:1500],
+                ephemeral=True,
+            )
+            return
+
+        bucket = "users" if self.subject_kind == "user" else "roles"
+        entries = grant_config(self.bot, self.guild.id)[bucket]
+        if self.values:
+            entries[str(subject.id)] = [str(role.id) for role in self.values]
+        else:
+            entries.pop(str(subject.id), None)
+        saved = self.bot.save_config()
+        embed = build_grant_permissions_embed(self.bot, self.guild, subject, self.subject_kind)
+        if not saved:
+            embed.add_field(name="Warning", value=_SAVE_FAILED, inline=False)
+        await interaction.response.edit_message(
+            embed=embed,
+            view=GrantPermissionsView(self.bot, self.guild, self.subject_kind, self.subject_id),
+        )
+
+
+class GrantPermissionsView(discord.ui.View):
+    def __init__(
+        self,
+        bot: commands.Bot,
+        guild: discord.Guild,
+        subject_kind: str | None = None,
+        subject_id: str | None = None,
+    ) -> None:
+        super().__init__(timeout=900)
+        self.bot = bot
+        self.guild = guild
+        self.subject_kind = subject_kind
+        self.subject_id = subject_id
+        self.add_item(_GrantMemberSubjectSelect(bot, guild))
+        self.add_item(_GrantRoleSubjectSelect(bot, guild))
+        self.add_item(_GrantRolesSelect(bot, guild, subject_kind, subject_id))
+
+    @discord.ui.button(label="Remove all for subject", style=discord.ButtonStyle.danger, row=3)
+    async def remove_all(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        subject, _ = _resolve_grant_subject(self.bot, self.guild, self.subject_kind, self.subject_id)
+        if subject is None:
+            await interaction.response.send_message("Pick a member or a role above first.", ephemeral=True)
+            return
+        bucket = "users" if self.subject_kind == "user" else "roles"
+        grant_config(self.bot, self.guild.id)[bucket].pop(str(subject.id), None)
+        saved = self.bot.save_config()
+        embed = build_grant_permissions_embed(self.bot, self.guild, subject, self.subject_kind)
+        if not saved:
+            embed.add_field(name="Warning", value=_SAVE_FAILED, inline=False)
+        await interaction.response.edit_message(
+            embed=embed,
+            view=GrantPermissionsView(self.bot, self.guild, self.subject_kind, self.subject_id),
+        )
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, row=3)
+    async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.edit_message(
+            embed=build_settings_embed(self.bot, self.guild),
+            view=SettingsPanelView(self.bot, self.guild),
+        )
+
+
 class Settings(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -1184,10 +1404,7 @@ class Settings(commands.Cog):
         member = interaction.user
         if not isinstance(member, discord.Member):
             return False
-        if member.guild_permissions.administrator:
-            return True
-        admin_roles = interaction.client.guild_config(interaction.guild.id).get("admin_roles", [])
-        return any(member.get_role(int(role_id)) is not None for role_id in admin_roles or [])
+        return interaction.client.is_bot_admin(member)
 
     @app_commands.command(name="settings", description="Open the interactive server settings panel")
     @app_commands.guild_only()
