@@ -52,21 +52,17 @@ class Grant(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
 
-    @app_commands.command(name="grant", description="Give one or more members a role")
+    @app_commands.command(name="grant", description="Give a member a role")
     @app_commands.guild_only()
     @app_commands.describe(
-        user1="The member to give the role to",
+        user="The member to give the role to",
         role="The role to give them",
-        user2="Another member to give the role to (optional)",
-        user3="Another member to give the role to (optional)",
     )
     async def grant_cmd(
         self,
         interaction: discord.Interaction,
-        user1: discord.Member,
+        user: discord.Member,
         role: discord.Role,
-        user2: discord.Member | None = None,
-        user3: discord.Member | None = None,
     ) -> None:
         if interaction.guild is None:
             await interaction.response.send_message("This command only works inside a server.", ephemeral=True)
@@ -83,35 +79,43 @@ class Grant(commands.Cog):
             await interaction.response.send_message(reason, ephemeral=True)
             return
 
-        targets = list({member.id: member for member in (user1, user2, user3) if member is not None}.values())
-        granted: list[discord.Member] = []
-        already: list[discord.Member] = []
-        failed: list[tuple[discord.Member, str]] = []
-        for target in targets:
-            if role in target.roles:
-                already.append(target)
-                continue
-            try:
-                await target.add_roles(role, reason=f"Granted by {invoker} via /grant", atomic=True)
-                granted.append(target)
-            except discord.Forbidden:
-                log.warning("Cannot grant %s to %s in %s (role hierarchy)", role, target, interaction.guild)
-                failed.append((target, "missing permission or role hierarchy"))
-            except discord.HTTPException:
-                log.warning("Failed to grant %s to %s", role, target, exc_info=True)
-                failed.append((target, "Discord API error"))
+        if role in user.roles:
+            await interaction.response.send_message(
+                f"{user.mention} already has {role.mention}.", ephemeral=True
+            )
+            return
 
-        embed = build_grant_result_embed(invoker, role, granted, already, failed)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-        await self._log(interaction.guild, invoker, role, granted, failed)
+        try:
+            await user.add_roles(role, reason=f"Granted by {invoker} via /grant", atomic=True)
+        except discord.Forbidden:
+            log.warning("Cannot grant %s to %s in %s (role hierarchy)", role, user, interaction.guild)
+            await interaction.response.send_message(
+                f"I couldn't give {role.mention} to {user.mention} — "
+                "check my Manage Roles permission and that my role is above it.",
+                ephemeral=True,
+            )
+            await self._log(interaction.guild, invoker, user, role, success=False)
+            return
+        except discord.HTTPException:
+            log.warning("Failed to grant %s to %s", role, user, exc_info=True)
+            await interaction.response.send_message(
+                "Discord rejected that — please try again.", ephemeral=True
+            )
+            await self._log(interaction.guild, invoker, user, role, success=False)
+            return
+
+        await interaction.response.send_message(
+            f"Gave {role.mention} to {user.mention}.", ephemeral=True
+        )
+        await self._log(interaction.guild, invoker, user, role, success=True)
 
     async def _log(
         self,
         guild: discord.Guild,
         invoker: discord.Member,
+        user: discord.Member,
         role: discord.Role,
-        granted: list[discord.Member],
-        failed: list[tuple[discord.Member, str]],
+        success: bool,
     ) -> None:
         log_channel_id = self.bot.guild_config(guild.id).get("log_channel_id")
         if not log_channel_id:
@@ -120,59 +124,20 @@ class Grant(commands.Cog):
         if channel is None:
             return
 
-        embed = discord.Embed(title="Role granted", color=0x5865F2, timestamp=discord.utils.utcnow())
-        embed.add_field(name="By", value=f"{invoker.mention} (`{invoker.id}`)", inline=False)
-        embed.add_field(name="Role", value=role.mention, inline=False)
-        embed.add_field(
-            name="Members",
-            value="\n".join(member.mention for member in granted) or "none",
-            inline=False,
+        embed = discord.Embed(
+            title="Role granted" if success else "Role grant failed",
+            color=0x5865F2 if success else discord.Color.orange(),
+            timestamp=discord.utils.utcnow(),
         )
-        if failed:
-            embed.add_field(
-                name="Failed",
-                value="\n".join(f"{member.mention} — {reason}" for member, reason in failed),
-                inline=False,
-            )
+        embed.add_field(name="By", value=f"{invoker.mention} (`{invoker.id}`)", inline=False)
+        embed.add_field(name="Member", value=f"{user.mention} (`{user.id}`)", inline=False)
+        embed.add_field(name="Role", value=role.mention, inline=False)
         embed.set_footer(text=f"{invoker} • {invoker.id}")
 
         try:
             await channel.send(embed=embed)
         except discord.HTTPException:
             log.warning("Could not send grant log to %s", channel, exc_info=True)
-
-
-def build_grant_result_embed(
-    invoker: discord.Member,
-    role: discord.Role,
-    granted: list[discord.Member],
-    already: list[discord.Member],
-    failed: list[tuple[discord.Member, str]],
-) -> discord.Embed:
-    embed = discord.Embed(
-        title="Role grant",
-        description=f"Granting {role.mention} as {invoker.mention}",
-        color=0x5865F2,
-    )
-    if granted:
-        embed.add_field(
-            name=f"Granted ({len(granted)})",
-            value="\n".join(member.mention for member in granted)[:1024],
-            inline=False,
-        )
-    if already:
-        embed.add_field(
-            name=f"Already had it ({len(already)})",
-            value="\n".join(member.mention for member in already)[:1024],
-            inline=False,
-        )
-    if failed:
-        embed.add_field(
-            name=f"Failed ({len(failed)})",
-            value="\n".join(f"{member.mention} — {reason}" for member, reason in failed)[:1024],
-            inline=False,
-        )
-    return embed
 
 
 async def setup(bot: commands.Bot) -> None:
