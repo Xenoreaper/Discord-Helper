@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from cogs.grant import grant_config, role_grant_problem
+from cogs.scheduler import is_valid_timezone
 from emoji_utils import MAX_EMOJI_LEN, is_valid_emoji
 
 log = logging.getLogger("rolebot.settings")
@@ -116,6 +117,13 @@ def build_settings_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Emb
     embed.add_field(name="Default role (on join)", value=_role_mention(guild, join.get("base_role_id")), inline=False)
     embed.add_field(name="Invite roles", value=_invite_text(bot, guild), inline=False)
     embed.add_field(name="Grant permissions", value=_grant_summary_text(bot, guild), inline=False)
+    embed.add_field(name="Timezone", value=config.get("timezone") or "UTC", inline=False)
+    schedules = config.get("scheduled_messages", [])
+    embed.add_field(
+        name="Scheduled messages",
+        value=f"{len(schedules)} configured" if schedules else "none — create one with `/schedule create`",
+        inline=False,
+    )
     menus = config.get("role_menus", [])
     if menus:
         lines = []
@@ -1082,6 +1090,40 @@ class _NoChatActionToggleButton(discord.ui.Button):
         await interaction.response.edit_message(embed=embed, view=SettingsPanelView(self.bot, interaction.guild))
 
 
+class TimezoneModal(discord.ui.Modal):
+    def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
+        super().__init__(title="Set timezone")
+        self.bot = bot
+        self.guild = guild
+        current = bot.guild_config(guild.id).get("timezone") or "UTC"
+        self.tz_input = discord.ui.TextInput(
+            label="Timezone (IANA name)",
+            default=current,
+            max_length=64,
+            placeholder="e.g. Europe/Berlin, America/New_York, UTC",
+        )
+        self.add_item(self.tz_input)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        name = self.tz_input.value.strip()
+        if not name or not is_valid_timezone(name):
+            await interaction.response.send_message(
+                "That isn't a known timezone. Use an IANA name like `Europe/Berlin` or `UTC`.",
+                ephemeral=True,
+            )
+            return
+        self.bot.guild_config(self.guild.id)["timezone"] = name
+        saved = self.bot.save_config()
+        embed = build_settings_embed(self.bot, self.guild)
+        if not saved:
+            embed.add_field(name="Warning", value=_SAVE_FAILED, inline=False)
+        await interaction.response.edit_message(
+            embed=embed,
+            view=SettingsPanelView(self.bot, self.guild),
+        )
+        await interaction.followup.send(f"Timezone set to **{name}**.", ephemeral=True)
+
+
 class SettingsPanelView(discord.ui.View):
     def __init__(self, bot: commands.Bot, guild: discord.Guild) -> None:
         super().__init__(timeout=900)
@@ -1162,6 +1204,10 @@ class SettingsPanelView(discord.ui.View):
             embed=build_grant_permissions_embed(self.bot, interaction.guild),
             view=GrantPermissionsView(self.bot, interaction.guild),
         )
+
+    @discord.ui.button(label="Timezone", style=discord.ButtonStyle.secondary, row=4)
+    async def timezone(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        await interaction.response.send_modal(TimezoneModal(self.bot, interaction.guild))
 
     @discord.ui.button(label="Clear...", style=discord.ButtonStyle.danger, row=4)
     async def clear(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:

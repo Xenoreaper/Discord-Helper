@@ -28,6 +28,8 @@ def default_guild_config() -> dict:
         "join": {"base_role_id": None, "invites": {}},
         "role_menus": [],
         "grant_permissions": {"users": {}, "roles": {}},
+        "scheduled_messages": [],
+        "timezone": "UTC",
         "easter_eggs": {},
     }
 
@@ -120,6 +122,8 @@ def validate_config(config: dict) -> None:
 
     _migrate_role_menu(config)
 
+    _validate_scheduled_messages(config)
+
     _validate_easter_eggs(config)
 
     menus = config.setdefault("role_menus", [])
@@ -181,6 +185,70 @@ def _validate_grant_permissions(config: dict) -> None:
                         f'config.json "grant_permissions.{bucket}[\'{subject_id}\'][{i}]" '
                         "must be a numeric role ID."
                     )
+
+
+def _validate_scheduled_messages(config: dict) -> None:
+    scheduled = config.setdefault("scheduled_messages", [])
+    if not isinstance(scheduled, list):
+        raise SystemExit('config.json "scheduled_messages" must be a list.')
+    seen: set[str] = set()
+    for i, entry in enumerate(scheduled):
+        if not isinstance(entry, dict):
+            raise SystemExit(f'config.json "scheduled_messages[{i}]" must be an object.')
+        entry_id = entry.get("id")
+        if not isinstance(entry_id, str) or not entry_id:
+            raise SystemExit(f'config.json "scheduled_messages[{i}].id" must be a non-empty string.')
+        if entry_id in seen:
+            raise SystemExit(f'config.json has duplicate scheduled message id "{entry_id}".')
+        seen.add(entry_id)
+        if not _is_id(entry.get("channel_id")):
+            raise SystemExit(f'config.json "scheduled_messages[{i}].channel_id" must be a numeric channel ID.')
+        if entry.get("content") is not None and not isinstance(entry.get("content"), str):
+            raise SystemExit(f'config.json "scheduled_messages[{i}].content" must be a string or null.')
+        embed = entry.get("embed")
+        if embed is not None and not isinstance(embed, dict):
+            raise SystemExit(f'config.json "scheduled_messages[{i}].embed" must be an object or null.')
+        if entry.get("next_run") is not None and not isinstance(entry.get("next_run"), str):
+            raise SystemExit(f'config.json "scheduled_messages[{i}].next_run" must be a string or null.')
+
+        schedule = entry.get("schedule")
+        if not isinstance(schedule, dict):
+            raise SystemExit(f'config.json "scheduled_messages[{i}].schedule" must be an object.')
+        kind = schedule.get("type")
+        if kind not in ("once", "interval", "daily", "weekly"):
+            raise SystemExit(
+                f'config.json "scheduled_messages[{i}].schedule.type" must be '
+                '"once", "interval", "daily" or "weekly".'
+            )
+        if kind == "interval":
+            minutes = schedule.get("minutes")
+            if isinstance(minutes, bool) or not isinstance(minutes, int) or minutes < 1:
+                raise SystemExit(
+                    f'config.json "scheduled_messages[{i}].schedule.minutes" must be a positive integer.'
+                )
+        if kind in ("daily", "weekly"):
+            time = schedule.get("time")
+            if not isinstance(time, str) or not re.fullmatch(r"\d{1,2}:\d{2}", time):
+                raise SystemExit(
+                    f'config.json "scheduled_messages[{i}].schedule.time" must look like "HH:MM".'
+                )
+        if kind == "weekly":
+            days = schedule.get("days")
+            if (
+                not isinstance(days, list)
+                or not days
+                or any(
+                    isinstance(day, bool) or not isinstance(day, int) or not 0 <= day <= 6
+                    for day in days
+                )
+            ):
+                raise SystemExit(
+                    f'config.json "scheduled_messages[{i}].schedule.days" must be a list of weekday numbers 0-6.'
+                )
+
+    timezone = config.get("timezone")
+    if timezone not in (None, "") and not isinstance(timezone, str):
+        raise SystemExit('config.json "timezone" must be a timezone name like "Europe/Berlin" or null.')
 
 
 def _validate_easter_eggs(config: dict) -> None:
@@ -262,6 +330,7 @@ class RoleBot(commands.Bot):
             "cogs.guard",
             "cogs.settings",
             "cogs.grant",
+            "cogs.scheduler",
             "cogs.easter_eggs",
         ):
             await self.load_extension(extension)
