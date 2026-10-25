@@ -116,7 +116,7 @@ def build_settings_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Emb
     embed.add_field(name="Kick-exempt roles", value=_exempt_roles_text(bot, guild), inline=False)
     embed.add_field(name="Default role (on join)", value=_role_mention(guild, join.get("base_role_id")), inline=False)
     embed.add_field(name="Invite roles", value=_invite_text(bot, guild), inline=False)
-    embed.add_field(name="Grant permissions", value=_grant_summary_text(bot, guild), inline=False)
+    embed.add_field(name="Grant/revoke permissions", value=_grant_summary_text(bot, guild), inline=False)
     embed.add_field(name="Timezone", value=config.get("timezone") or "UTC", inline=False)
     schedules = config.get("scheduled_messages", [])
     embed.add_field(
@@ -229,13 +229,13 @@ def _grant_summary_text(bot: commands.Bot, guild: discord.Guild) -> str:
     users = len(grant.get("users", {}))
     roles = len(grant.get("roles", {}))
     if not users and not roles:
-        return "none — only administrators and bot admin roles can grant roles"
+        return "none — only administrators and bot admin roles can grant or revoke roles"
     parts = []
     if users:
         parts.append(f"{users} member{'s' if users != 1 else ''}")
     if roles:
         parts.append(f"{roles} role{'s' if roles != 1 else ''}")
-    return f"{', '.join(parts)} with custom grants"
+    return f"{', '.join(parts)} with custom permissions"
 
 
 def _grant_subject_lines(bot: commands.Bot, guild: discord.Guild, bucket: str) -> str:
@@ -262,11 +262,12 @@ def build_grant_permissions_embed(
     subject_kind: str | None = None,
 ) -> discord.Embed:
     embed = discord.Embed(
-        title="Grant permissions",
+        title="Grant/revoke permissions",
         description=(
-            "Who may use `/grant` to hand out which roles. Administrators and bot admin roles "
-            "don't need an entry — they can grant any role below their own highest role. Pick a "
-            "member or a role below, then choose the roles they are allowed to give."
+            "Who may use `/grant` and `/revoke` for which roles. The same entry allows both — if "
+            "someone can grant a role, they can revoke it too. Administrators and bot admin roles "
+            "don't need an entry — they can manage any role below their own highest role. Pick a "
+            "member or a role below, then choose the roles they are allowed to manage."
         ),
         color=0x5865F2,
     )
@@ -1198,7 +1199,7 @@ class SettingsPanelView(discord.ui.View):
             view=RolesPanelView(self.bot, interaction.guild),
         )
 
-    @discord.ui.button(label="Grant permissions", style=discord.ButtonStyle.secondary, row=4)
+    @discord.ui.button(label="Grant/revoke", style=discord.ButtonStyle.secondary, row=4)
     async def grant_permissions(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         await interaction.response.edit_message(
             embed=build_grant_permissions_embed(self.bot, interaction.guild),
