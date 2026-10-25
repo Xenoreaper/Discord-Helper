@@ -3,6 +3,7 @@ import logging
 import discord
 from discord import app_commands
 from discord.ext import commands
+from discord import ui
 
 from cogs.grant import grant_config, role_grant_problem
 from cogs.scheduler import is_valid_timezone
@@ -101,29 +102,99 @@ def _parse_optional_int(value: str) -> int | None:
     return amount if amount >= 1 else None
 
 
-def build_settings_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Embed:
+def _channel_text(bot: commands.Bot, channel_id) -> str:
+    if not channel_id:
+        return "not set"
+    channel = bot.get_channel(int(channel_id))
+    return channel.mention if channel else f"`{channel_id}` (not found)"
+
+
+def _role_text(guild: discord.Guild, role_id) -> str:
+    if not role_id:
+        return "not set"
+    role = guild.get_role(int(role_id))
+    return role.mention if role else f"`{role_id}` (not found)"
+
+
+def build_settings_view(bot: commands.Bot, guild: discord.Guild) -> ui.LayoutView:
     config = bot.guild_config(guild.id)
     join = config.get("join", {})
-    embed = discord.Embed(title="Server Settings", color=0x5865F2)
-    embed.add_field(name="No-Chat channel", value=_channel_mention(bot, config.get("kick_channel_id")), inline=False)
-    embed.add_field(
-        name="No-chat punishment",
-        value="ban" if (config.get("kick_action") or "kick") == "ban" else "kick",
-        inline=False,
+    container = ui.Container()
+    container.add_item(ui.TextDisplay("# Server Settings"))
+    
+    # Kick channel
+    container.add_item(
+        ui.Section(
+            ui.TextDisplay(f"**No-Chat channel**\n{_channel_text(bot, config.get('kick_channel_id'))}"),
+            accessory=ui.Button(label="Set", style=discord.ButtonStyle.secondary, custom_id=f"settings:kick:{guild.id}"),
+        )
     )
-    embed.add_field(name="Log channel", value=_channel_mention(bot, config.get("log_channel_id")), inline=False)
-    embed.add_field(name="Bot admin roles", value=_role_list_text(bot, guild, "admin_roles"), inline=False)
-    embed.add_field(name="Kick-exempt roles", value=_exempt_roles_text(bot, guild), inline=False)
-    embed.add_field(name="Default role (on join)", value=_role_mention(guild, join.get("base_role_id")), inline=False)
-    embed.add_field(name="Invite roles", value=_invite_text(bot, guild), inline=False)
-    embed.add_field(name="Grant permissions", value=_grant_summary_text(bot, guild), inline=False)
-    embed.add_field(name="Timezone", value=config.get("timezone") or "UTC", inline=False)
+    # Kick action
+    action = "ban" if (config.get("kick_action") or "kick") == "ban" else "kick"
+    container.add_item(
+        ui.Section(
+            ui.TextDisplay(f"**No-chat punishment**\n{action}"),
+            accessory=ui.Button(label="Toggle", style=discord.ButtonStyle.secondary, custom_id=f"settings:kickaction:{guild.id}"),
+        )
+    )
+    # Log channel
+    container.add_item(
+        ui.Section(
+            ui.TextDisplay(f"**Log channel**\n{_channel_text(bot, config.get('log_channel_id'))}"),
+            accessory=ui.Button(label="Set", style=discord.ButtonStyle.secondary, custom_id=f"settings:log:{guild.id}"),
+        )
+    )
+    # Bot admin roles
+    container.add_item(
+        ui.Section(
+            ui.TextDisplay(f"**Bot admin roles**\n{_role_list_text(bot, guild, 'admin_roles')}"),
+            accessory=ui.Button(label="Manage", style=discord.ButtonStyle.secondary, custom_id=f"settings:adminroles:{guild.id}"),
+        )
+    )
+    # Kick exempt roles
+    container.add_item(
+        ui.Section(
+            ui.TextDisplay(f"**Kick-exempt roles**\n{_exempt_roles_text(bot, guild)}"),
+            accessory=ui.Button(label="Manage", style=discord.ButtonStyle.secondary, custom_id=f"settings:exempt:{guild.id}"),
+        )
+    )
+    # Default role
+    container.add_item(
+        ui.Section(
+            ui.TextDisplay(f"**Default role (on join)**\n{_role_text(guild, join.get('base_role_id'))}"),
+            accessory=ui.Button(label="Set", style=discord.ButtonStyle.secondary, custom_id=f"settings:defrole:{guild.id}"),
+        )
+    )
+    # Invite roles
+    container.add_item(
+        ui.Section(
+            ui.TextDisplay(f"**Invite roles**\n{_invite_text(bot, guild)}"),
+            accessory=ui.Button(label="Manage", style=discord.ButtonStyle.secondary, custom_id=f"settings:invites:{guild.id}"),
+        )
+    )
+    # Grant permissions
+    container.add_item(
+        ui.Section(
+            ui.TextDisplay(f"**Grant permissions**\n{_grant_summary_text(bot, guild)}"),
+            accessory=ui.Button(label="Manage", style=discord.ButtonStyle.secondary, custom_id=f"settings:grant:{guild.id}"),
+        )
+    )
+    # Timezone
+    container.add_item(
+        ui.Section(
+            ui.TextDisplay(f"**Timezone**\n{config.get('timezone') or 'UTC'}"),
+            accessory=ui.Button(label="Set", style=discord.ButtonStyle.secondary, custom_id=f"settings:tz:{guild.id}"),
+        )
+    )
+    # Scheduled messages
     schedules = config.get("scheduled_messages", [])
-    embed.add_field(
-        name="Scheduled messages",
-        value=f"{len(schedules)} configured" if schedules else "none — create one with `/schedule create`",
-        inline=False,
+    container.add_item(
+        ui.Section(
+            ui.TextDisplay(f"**Scheduled messages**\n{len(schedules)} configured" if schedules else "**Scheduled messages**\nnone — create one with `/schedule create`"),
+            accessory=ui.Button(label="Info", style=discord.ButtonStyle.secondary, custom_id=f"settings:sched:{guild.id}", disabled=True),
+        )
     )
+    # Role menus
     menus = config.get("role_menus", [])
     if menus:
         lines = []
@@ -132,15 +203,33 @@ def build_settings_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Emb
             name = menu.get("name") or menu["id"]
             posted = "posted" if menu.get("message_id") else "not posted"
             lines.append(f"{name} — {channel.mention if channel else 'no channel'} ({len(menu.get('roles', []))} roles, {posted})")
-        value = "\n".join(lines)
+        val = "\n".join(lines)
     else:
-        value = "none — create one in the Role menus panel"
-    embed.add_field(name="Role menus", value=value, inline=False)
+        val = "none — create one in the Role menus panel"
+    container.add_item(
+        ui.Section(
+            ui.TextDisplay(f"**Role menus**\n{val}"),
+            accessory=ui.Button(label="Manage", style=discord.ButtonStyle.secondary, custom_id=f"settings:menus:{guild.id}"),
+        )
+    )
+    # Easter eggs
     easter_eggs = config.get("easter_eggs", {})
     easter_enabled = easter_eggs.get("enabled", True)
-    embed.add_field(name="Easter eggs", value="on" if easter_enabled else "off", inline=False)
-    embed.set_footer(text="Manage role menus in the dedicated panel. Dismiss this message when done.")
-    return embed
+    container.add_item(
+        ui.Section(
+            ui.TextDisplay(f"**Easter eggs**\n{'on' if easter_enabled else 'off'}"),
+            accessory=ui.Button(label="Toggle", style=discord.ButtonStyle.secondary, custom_id=f"settings:easter:{guild.id}"),
+        )
+    )
+    container.add_item(ui.TextDisplay("Manage role menus in the dedicated panel. Dismiss this message when done."))
+    
+    view = ui.LayoutView(timeout=None)
+    view.add_item(container)
+    return view
+
+
+# Keep old for compatibility
+build_settings_embed = build_settings_view
 
 
 def build_menus_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Embed:
@@ -163,6 +252,206 @@ def build_menus_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Embed:
         value += f"\n**Posted** — [see message]({link})" if link else "\nNot posted yet"
         embed.add_field(name=name, value=value, inline=False)
     return embed
+
+
+def build_menus_view(bot: commands.Bot, guild: discord.Guild) -> discord.ui.LayoutView:
+    menus = bot.guild_config(guild.id).get("role_menus", [])
+    view = discord.ui.LayoutView(timeout=None)
+    container = ui.Container()
+    container.add_item(ui.TextDisplay("# Role menus"))
+    container.add_item(ui.TextDisplay("Menus are only posted here — nothing gets posted by accident."))
+    if not menus:
+        container.add_item(ui.TextDisplay("**No menus yet**\nPress **New menu** to create your first one."))
+    else:
+        for menu in menus:
+            channel = guild.get_channel(int(menu["channel_id"])) if menu.get("channel_id") else None
+            name = menu.get("name") or menu["id"]
+            role_count = len(menu.get("roles", []))
+            link = _menu_post_link(bot, menu)
+            status = f"[Posted message]({link})" if link else "Not posted yet"
+            val = f"{channel.mention if channel else 'no channel set'} · {role_count} role{'s' if role_count != 1 else ''}\n{status}"
+            container.add_item(ui.TextDisplay(f"**{name}**\n{val}"))
+        row_m = ui.ActionRow()
+        msel = discord.ui.Select(
+            placeholder="Manage an existing menu",
+            options=[
+                discord.SelectOption(label=((m.get("name") or m["id"])[:100]), value=m["id"]) for m in menus[:25]
+            ],
+        )
+        async def _open_m(i: discord.Interaction):
+            try:
+                if not i.response.is_done():
+                    try:
+                        await i.response.defer()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                menu_id = msel.values[0]
+                menu = _get_menu(bot, i.guild, menu_id)
+                if menu is None:
+                    try:
+                        if i.response.is_done():
+                            try:
+                                await i.edit_original_response(view=build_menus_view(bot, i.guild))
+                            except Exception:
+                                if i.message:
+                                    await i.followup.edit_message(i.message.id, view=build_menus_view(bot, i.guild))
+                        else:
+                            await i.response.edit_message(view=build_menus_view(bot, i.guild))
+                    except Exception:
+                        pass
+                    return
+                embed = build_menu_editor_embed(bot, menu)
+                view_e = MenuEditorView(bot, i.guild, menu_id)
+                try:
+                    bot.add_view(view_e)
+                except Exception:
+                    pass
+                try:
+                    if not i.response.is_done():
+                        await i.response.edit_message(embed=embed, view=view_e)
+                    else:
+                        try:
+                            await i.edit_original_response(embed=embed, view=view_e)
+                        except Exception:
+                            if i.message:
+                                await i.followup.edit_message(i.message.id, embed=embed, view=view_e)
+                            else:
+                                await i.followup.send(embed=embed, view=view_e, ephemeral=True)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            try:
+                if not i.response.is_done():
+                    await i.response.defer()
+            except Exception:
+                pass
+            menu_id = msel.values[0]
+            menu = _get_menu(bot, i.guild, menu_id)
+            if menu is None:
+                try:
+                    await i.edit_original_response(view=build_menus_view(bot, i.guild))
+                except Exception:
+                    try:
+                        await i.followup.edit_message(i.message.id, view=build_menus_view(bot, i.guild)) if i.message else None
+                    except Exception:
+                        pass
+                return
+            try:
+                embed = build_menu_editor_embed(bot, menu)
+                view_e = MenuEditorView(bot, i.guild, menu_id)
+                try:
+                    bot.add_view(view_e)
+                except Exception:
+                    pass
+                if not i.response.is_done():
+                    await i.response.edit_message(embed=embed, view=view_e)
+                else:
+                    try:
+                        await i.edit_original_response(embed=embed, view=view_e)
+                    except Exception:
+                        try:
+                            if i.message:
+                                await i.followup.edit_message(i.message.id, embed=embed, view=view_e)
+                            else:
+                                await i.followup.send(embed=embed, view=view_e, ephemeral=True)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        msel.callback = _open_m
+        row_m.add_item(msel)
+        container.add_item(row_m)
+    row = ui.ActionRow()
+    new_btn = ui.Button(label="New menu", style=discord.ButtonStyle.primary)
+    async def _new(i: discord.Interaction):
+        try:
+            cog = bot.get_cog("ReactionRoles")
+            if cog is not None and hasattr(cog, "create_menu"):
+                channel = i.channel
+                if isinstance(channel, discord.TextChannel):
+                    try:
+                        menu = await cog.create_menu(channel)
+                        await i.response.edit_message(
+                            embed=build_menu_editor_embed(bot, menu),
+                            view=MenuEditorView(bot, i.guild, menu["id"]),
+                        )
+                        return
+                    except Exception:
+                        pass
+            await i.response.edit_message(
+                embed=discord.Embed(
+                    title="New role menu",
+                    description="Choose the channel for this menu. You can change it later.",
+                    color=0x5865F2,
+                ),
+                view=NewMenuView(bot, guild),
+            )
+        except Exception:
+            try:
+                await i.response.edit_message(embed=build_menu_creator_embed(bot, guild), view=MenuCreatorView(bot, guild))
+            except Exception:
+                pass
+    new_btn.callback = _new
+    rep_btn = ui.Button(label="Repost/refresh all", style=discord.ButtonStyle.secondary)
+    async def _rep(i: discord.Interaction):
+        try:
+            cog = bot.get_cog("ReactionRoles")
+            if cog is not None:
+                try:
+                    await cog.refresh_all(i.guild)
+                except Exception:
+                    for m in bot.guild_config(i.guild.id).get("role_menus", []):
+                        try:
+                            await cog.refresh_menu(m)
+                        except Exception:
+                            pass
+            await i.response.edit_message(view=build_menus_view(bot, i.guild))
+        except Exception:
+            try:
+                await i.response.edit_message(embed=build_menus_embed(bot, guild), view=MenuPanelView(bot, guild))
+            except Exception:
+                pass
+    rep_btn.callback = _rep
+    row.add_item(new_btn)
+    row.add_item(rep_btn)
+    container.add_item(row)
+    back_row = ui.ActionRow()
+    back_btn = ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+    async def _back(i: discord.Interaction):
+        try:
+            v = build_settings_view(bot, i.guild)
+            try:
+                bot.add_view(v)
+            except Exception:
+                pass
+            if not i.response.is_done():
+                await i.response.edit_message(view=v)
+            else:
+                try:
+                    await i.edit_original_response(view=v)
+                except Exception:
+                    try:
+                        if i.message:
+                            await i.followup.edit_message(i.message.id, view=v)
+                        else:
+                            await i.followup.send(view=v, ephemeral=True)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    back_btn.callback = _back
+    back_row.add_item(back_btn)
+    container.add_item(back_row)
+    view.add_item(container)
+    try:
+        bot.add_view(view)
+    except Exception:
+        pass
+    return view
 
 
 def build_menu_editor_embed(bot: commands.Bot, menu: dict) -> discord.Embed:
@@ -206,6 +495,64 @@ def build_invites_embed(bot: commands.Bot, guild: discord.Guild, pending: str | 
     return embed
 
 
+def build_invites_view(bot: commands.Bot, invites: list[discord.Invite], guild: discord.Guild, pending_invite: str | None = None) -> discord.ui.LayoutView:
+    view = discord.ui.LayoutView(timeout=None)
+    container = ui.Container()
+    container.add_item(ui.TextDisplay("# Invite roles"))
+    container.add_item(ui.TextDisplay("Map an invite link to a role. Members who join with that invite get the role."))
+    container.add_item(ui.TextDisplay(f"**Configured**\n{_invite_text(bot, guild)}"))
+    if pending_invite:
+        container.add_item(ui.TextDisplay(f"**Pending**\nNow pick the role for invite `{pending_invite}`."))
+        row = ui.ActionRow()
+        row.add_item(_RoleForInviteSelect(bot, pending_invite, guild, invites))
+        container.add_item(row)
+    else:
+        if invites:
+            row1 = ui.ActionRow()
+            row1.add_item(_InviteSelect(bot, invites, guild))
+            container.add_item(row1)
+        if bot.guild_config(guild.id).get("join", {}).get("invites"):
+            row2 = ui.ActionRow()
+            row2.add_item(_LimitInviteSelect(bot, guild, invites))
+            container.add_item(row2)
+            row3 = ui.ActionRow()
+            row3.add_item(_RemoveInviteSelect(bot, guild, invites))
+            container.add_item(row3)
+    back_row = ui.ActionRow()
+    back_btn = ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+    async def _back(i: discord.Interaction):
+        try:
+            v = build_settings_view(bot, i.guild)
+            try:
+                bot.add_view(v)
+            except Exception:
+                pass
+            if not i.response.is_done():
+                await i.response.edit_message(view=v)
+            else:
+                try:
+                    await i.edit_original_response(view=v)
+                except Exception:
+                    try:
+                        if i.message:
+                            await i.followup.edit_message(i.message.id, view=v)
+                        else:
+                            await i.followup.send(view=v, ephemeral=True)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    back_btn.callback = _back
+    back_row.add_item(back_btn)
+    container.add_item(back_row)
+    view.add_item(container)
+    try:
+        bot.add_view(view)
+    except Exception:
+        pass
+    return view
+
+
 def build_clear_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Embed:
     embed = build_settings_embed(bot, guild)
     embed.title = "Clear a setting"
@@ -222,6 +569,52 @@ def build_roles_panel_embed(bot: commands.Bot, guild: discord.Guild) -> discord.
         "the channel kick automatically; kick-exempt roles only bypass the kick."
     )
     return embed
+
+
+def build_roles_panel_view(bot: commands.Bot, guild: discord.Guild) -> discord.ui.LayoutView:
+    view = discord.ui.LayoutView(timeout=None)
+    container = ui.Container()
+    container.add_item(ui.TextDisplay("# Member & admin roles"))
+    container.add_item(ui.TextDisplay("Select roles to add them — current roles are pre-selected, so deselect to remove specific ones. Admin roles can open /settings and bypass the channel kick; kick-exempt roles only bypass the kick."))
+    row1 = ui.ActionRow()
+    row1.add_item(_ExemptRolesSelect(bot, guild))
+    container.add_item(row1)
+    row2 = ui.ActionRow()
+    row2.add_item(_AdminRolesSelect(bot, guild))
+    container.add_item(row2)
+    back_row = ui.ActionRow()
+    back_btn = ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+    async def _back(i: discord.Interaction):
+        try:
+            v = build_settings_view(bot, i.guild)
+            try:
+                bot.add_view(v)
+            except Exception:
+                pass
+            if not i.response.is_done():
+                await i.response.edit_message(view=v)
+            else:
+                try:
+                    await i.edit_original_response(view=v)
+                except Exception:
+                    try:
+                        if i.message:
+                            await i.followup.edit_message(i.message.id, view=v)
+                        else:
+                            await i.followup.send(view=v, ephemeral=True)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    back_btn.callback = _back
+    back_row.add_item(back_btn)
+    container.add_item(back_row)
+    view.add_item(container)
+    try:
+        bot.add_view(view)
+    except Exception:
+        pass
+    return view
 
 
 def _grant_summary_text(bot: commands.Bot, guild: discord.Guild) -> str:
@@ -253,6 +646,98 @@ def _grant_subject_lines(bot: commands.Bot, guild: discord.Guild, bucket: str) -
             roles.append(role.mention if role else f"`{role_id}` (not found)")
         lines.append(f"{label} → {', '.join(roles) or 'none'}")
     return "\n".join(lines)[:1024] or "none"
+
+
+def build_grant_permissions_view(bot: commands.Bot, guild: discord.Guild) -> discord.ui.LayoutView:
+    view = discord.ui.LayoutView(timeout=None)
+    container = ui.Container()
+    container.add_item(ui.TextDisplay("# Grant permissions"))
+    container.add_item(ui.TextDisplay("Let specific members or roles grant roles using /grant."))
+    container.add_item(ui.TextDisplay(f"**Users**\n{_grant_subject_lines(bot, guild, 'users')}"))
+    container.add_item(ui.TextDisplay(f"**Roles**\n{_grant_subject_lines(bot, guild, 'roles')}"))
+    row = ui.ActionRow()
+    msel = discord.ui.MemberSelect(placeholder="Add/edit user", min_values=1, max_values=1)
+    async def _mu(i: discord.Interaction, s: discord.ui.MemberSelect):
+        try:
+            member = s.values[0]
+            v = GrantPermissionsView(bot, guild, "user", str(member.id))
+            embed = build_grant_permissions_embed(bot, guild, member, "user")
+            if not i.response.is_done():
+                await i.response.edit_message(embed=embed, view=v)
+            else:
+                try:
+                    await i.edit_original_response(embed=embed, view=v)
+                except Exception:
+                    try:
+                        if i.message:
+                            await i.followup.edit_message(i.message.id, embed=embed, view=v)
+                        else:
+                            await i.followup.send(embed=embed, view=v, ephemeral=True)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    msel.callback = _mu
+    row.add_item(msel)
+    container.add_item(row)
+    row2 = ui.ActionRow()
+    rsel = discord.ui.RoleSelect(placeholder="Add/edit role", min_values=1, max_values=1)
+    async def _mr(i: discord.Interaction, s: discord.ui.RoleSelect):
+        try:
+            role = s.values[0]
+            v = GrantPermissionsView(bot, guild, "role", str(role.id))
+            embed = build_grant_permissions_embed(bot, guild, role, "role")
+            if not i.response.is_done():
+                await i.response.edit_message(embed=embed, view=v)
+            else:
+                try:
+                    await i.edit_original_response(embed=embed, view=v)
+                except Exception:
+                    try:
+                        if i.message:
+                            await i.followup.edit_message(i.message.id, embed=embed, view=v)
+                        else:
+                            await i.followup.send(embed=embed, view=v, ephemeral=True)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    rsel.callback = _mr
+    row2.add_item(rsel)
+    container.add_item(row2)
+    back_row = ui.ActionRow()
+    back_btn = ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+    async def _back(i: discord.Interaction):
+        try:
+            v = build_settings_view(bot, i.guild)
+            try:
+                bot.add_view(v)
+            except Exception:
+                pass
+            if not i.response.is_done():
+                await i.response.edit_message(view=v)
+            else:
+                try:
+                    await i.edit_original_response(view=v)
+                except Exception:
+                    try:
+                        if i.message:
+                            await i.followup.edit_message(i.message.id, view=v)
+                        else:
+                            await i.followup.send(view=v, ephemeral=True)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    back_btn.callback = _back
+    back_row.add_item(back_btn)
+    container.add_item(back_row)
+    view.add_item(container)
+    try:
+        bot.add_view(view)
+    except Exception:
+        pass
+    return view
 
 
 def build_grant_permissions_embed(
@@ -318,10 +803,26 @@ class _InviteSelect(discord.ui.Select):
         self.guild = guild
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        await interaction.response.edit_message(
-            embed=build_invites_embed(self.bot, self.guild),
-            view=InviteRolesView(self.bot, self.invites, self.guild, pending_invite=self.values[0]),
-        )
+        try:
+            view = build_invites_view(self.bot, self.invites, self.guild, pending_invite=self.values[0])
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(view=view)
+            else:
+                try:
+                    await interaction.edit_original_response(view=view)
+                except Exception:
+                    try:
+                        if interaction.message:
+                            await interaction.followup.edit_message(interaction.message.id, view=view)
+                        else:
+                            await interaction.followup.send(view=view, ephemeral=True)
+                    except Exception:
+                        pass
+        except Exception:
+            await interaction.response.edit_message(
+                embed=build_invites_embed(self.bot, self.guild),
+                view=InviteRolesView(self.bot, self.invites, self.guild, pending_invite=self.values[0]),
+            )
 
 
 class _RoleForInviteSelect(discord.ui.RoleSelect):
@@ -340,12 +841,31 @@ class _RoleForInviteSelect(discord.ui.RoleSelect):
             self.code
         ] = str(role.id)
         saved = self.bot.save_config()
-        await interaction.response.edit_message(
-            embed=build_invites_embed(self.bot, self.guild),
-            view=InviteRolesView(self.bot, self.invites, self.guild),
-        )
+        try:
+            view = build_invites_view(self.bot, self.invites, self.guild)
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(view=view)
+            else:
+                try:
+                    await interaction.edit_original_response(view=view)
+                except Exception:
+                    try:
+                        if interaction.message:
+                            await interaction.followup.edit_message(interaction.message.id, view=view)
+                        else:
+                            await interaction.followup.send(view=view, ephemeral=True)
+                    except Exception:
+                        pass
+        except Exception:
+            await interaction.response.edit_message(
+                embed=build_invites_embed(self.bot, self.guild),
+                view=InviteRolesView(self.bot, self.invites, self.guild),
+            )
         if not saved:
-            await interaction.followup.send(_SAVE_FAILED, ephemeral=True)
+            try:
+                await interaction.followup.send(_SAVE_FAILED, ephemeral=True)
+            except Exception:
+                pass
 
 
 class _RemoveInviteSelect(discord.ui.Select):
@@ -365,12 +885,31 @@ class _RemoveInviteSelect(discord.ui.Select):
         code = self.values[0]
         self.bot.guild_config(self.guild.id).get("join", {}).get("invites", {}).pop(code, None)
         saved = self.bot.save_config()
-        await interaction.response.edit_message(
-            embed=build_invites_embed(self.bot, self.guild),
-            view=InviteRolesView(self.bot, self.invites, self.guild),
-        )
+        try:
+            view = build_invites_view(self.bot, self.invites, self.guild)
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(view=view)
+            else:
+                try:
+                    await interaction.edit_original_response(view=view)
+                except Exception:
+                    try:
+                        if interaction.message:
+                            await interaction.followup.edit_message(interaction.message.id, view=view)
+                        else:
+                            await interaction.followup.send(view=view, ephemeral=True)
+                    except Exception:
+                        pass
+        except Exception:
+            await interaction.response.edit_message(
+                embed=build_invites_embed(self.bot, self.guild),
+                view=InviteRolesView(self.bot, self.invites, self.guild),
+            )
         if not saved:
-            await interaction.followup.send(_SAVE_FAILED, ephemeral=True)
+            try:
+                await interaction.followup.send(_SAVE_FAILED, ephemeral=True)
+            except Exception:
+                pass
 
 
 class InviteLimitModal(discord.ui.Modal):
@@ -408,23 +947,42 @@ class InviteLimitModal(discord.ui.Modal):
             await interaction.response.send_message("Limits must be whole numbers (days/uses).", ephemeral=True)
             return
 
-        invites = self.bot.guild_config(self.guild.id).setdefault("join", {}).setdefault("invites", {})
-        raw = invites.get(self.code)
+        invites_cfg = self.bot.guild_config(self.guild.id).setdefault("join", {}).setdefault("invites", {})
+        raw = invites_cfg.get(self.code)
         spec = dict(raw) if isinstance(raw, dict) else {"role_id": raw}
         for field, value in (("max_uses", max_uses), ("within_days", window_days)):
             if value is None:
                 spec.pop(field, None)
             else:
                 spec[field] = value
-        invites[self.code] = spec
+        invites_cfg[self.code] = spec
 
         saved = self.bot.save_config()
-        await interaction.response.edit_message(
-            embed=build_invites_embed(self.bot, self.guild),
-            view=InviteRolesView(self.bot, self.invites, self.guild),
-        )
+        try:
+            view = build_invites_view(self.bot, self.invites, self.guild)
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(view=view)
+            else:
+                try:
+                    await interaction.edit_original_response(view=view)
+                except Exception:
+                    try:
+                        if interaction.message:
+                            await interaction.followup.edit_message(interaction.message.id, view=view)
+                        else:
+                            await interaction.followup.send(view=view, ephemeral=True)
+                    except Exception:
+                        pass
+        except Exception:
+            await interaction.response.edit_message(
+                embed=build_invites_embed(self.bot, self.guild),
+                view=InviteRolesView(self.bot, self.invites, self.guild),
+            )
         if not saved:
-            await interaction.followup.send(_SAVE_FAILED, ephemeral=True)
+            try:
+                await interaction.followup.send(_SAVE_FAILED, ephemeral=True)
+            except Exception:
+                pass
 
 
 class _LimitInviteSelect(discord.ui.Select):
@@ -441,9 +999,15 @@ class _LimitInviteSelect(discord.ui.Select):
         self.invites = invites
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(
-            InviteLimitModal(self.bot, self.guild, self.values[0], self.invites)
-        )
+        try:
+            await interaction.response.send_modal(
+                InviteLimitModal(self.bot, self.guild, self.values[0], self.invites)
+            )
+        except Exception:
+            try:
+                await interaction.followup.send("Use the limit button again.", ephemeral=True)
+            except Exception:
+                pass
 
 
 class _BackToSettingsButton(discord.ui.Button):
@@ -452,10 +1016,21 @@ class _BackToSettingsButton(discord.ui.Button):
         self.bot = bot
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        await interaction.response.edit_message(
-            embed=build_settings_embed(self.bot, interaction.guild),
-            view=SettingsPanelView(self.bot, interaction.guild),
-        )
+        try:
+            view = build_settings_view(self.bot, interaction.guild)
+            try:
+                self.bot.add_view(view)
+            except Exception:
+                pass
+            await interaction.response.edit_message(view=view)
+        except Exception:
+            try:
+                await interaction.response.edit_message(
+                    embed=build_settings_embed(self.bot, interaction.guild),
+                    view=SettingsPanelView(self.bot, interaction.guild),
+                )
+            except Exception:
+                pass
 
 
 class InviteRolesView(discord.ui.View):
@@ -846,6 +1421,16 @@ class MenuEditorView(discord.ui.View):
 
     @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary, row=4)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        try:
+            view = build_settings_view(self.bot, self.guild)
+            try:
+                self.bot.add_view(view)
+            except Exception:
+                pass
+            await interaction.response.edit_message(view=view)
+            return
+        except Exception:
+            pass
         await interaction.response.edit_message(
             embed=build_menus_embed(self.bot, self.guild),
             view=MenuPanelView(self.bot, self.guild),
@@ -943,10 +1528,19 @@ class MenuPanelView(discord.ui.View):
 
     @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.edit_message(
-            embed=build_settings_embed(self.bot, self.guild),
-            view=SettingsPanelView(self.bot, self.guild),
-        )
+        try:
+            v = build_menus_view(self.bot, self.guild)
+            await interaction.response.edit_message(view=v)
+            return
+        except Exception:
+            pass
+        try:
+            await interaction.response.edit_message(
+                embed=build_settings_embed(self.bot, self.guild),
+                view=SettingsPanelView(self.bot, self.guild),
+            )
+        except Exception:
+            pass
 
 
 class NewMenuView(discord.ui.View):
@@ -999,6 +1593,16 @@ class NewMenuView(discord.ui.View):
 
     @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
     async def back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        try:
+            view = build_settings_view(self.bot, self.guild)
+            try:
+                self.bot.add_view(view)
+            except Exception:
+                pass
+            await interaction.response.edit_message(view=view)
+            return
+        except Exception:
+            pass
         await interaction.response.edit_message(
             embed=build_menus_embed(self.bot, self.guild),
             view=MenuPanelView(self.bot, self.guild),
@@ -1271,10 +1875,40 @@ def _resolved_roles(bot: commands.Bot, guild: discord.Guild, key: str) -> list[d
 async def _refresh_roles_panel(
     interaction: discord.Interaction, bot: commands.Bot, guild: discord.Guild, saved: bool
 ) -> None:
-    embed = build_roles_panel_embed(bot, guild)
-    if not saved:
-        embed.add_field(name="Warning", value=_SAVE_FAILED, inline=False)
-    await interaction.response.edit_message(embed=embed, view=RolesPanelView(bot, guild))
+    try:
+        view = build_roles_panel_view(bot, guild)
+        if not saved:
+            pass
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.edit_message(view=view)
+            else:
+                try:
+                    await interaction.edit_original_response(view=view)
+                except Exception:
+                    try:
+                        if interaction.message:
+                            await interaction.followup.edit_message(interaction.message.id, view=view)
+                        else:
+                            await interaction.followup.send(view=view, ephemeral=True)
+                    except Exception:
+                        pass
+        except Exception:
+            try:
+                embed = build_roles_panel_embed(bot, guild)
+                if not saved:
+                    embed.add_field(name="Warning", value=_SAVE_FAILED, inline=False)
+                await interaction.response.edit_message(embed=embed, view=RolesPanelView(bot, guild))
+            except Exception:
+                pass
+    except Exception:
+        embed = build_roles_panel_embed(bot, guild)
+        if not saved:
+            embed.add_field(name="Warning", value=_SAVE_FAILED, inline=False)
+        try:
+            await interaction.response.edit_message(embed=embed, view=RolesPanelView(bot, guild))
+        except Exception:
+            pass
 
 
 class RolesPanelView(discord.ui.View):
@@ -1452,6 +2086,731 @@ class Settings(commands.Cog):
             return False
         return interaction.client.is_bot_admin(member)
 
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        try:
+            if interaction.type != discord.InteractionType.component:
+                return
+        except Exception:
+            if getattr(interaction, "type", None) != 3:
+                return
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            return
+        if not self._is_bot_admin(interaction):
+            return
+        data = getattr(interaction, "data", None) or {}
+        custom_id = data.get("custom_id", "") if isinstance(data, dict) else getattr(data, "custom_id", "")
+        if not custom_id or not str(custom_id).startswith("settings:"):
+            return
+        try:
+            parts = str(custom_id).split(":")
+            if len(parts) < 3:
+                return
+            action = parts[1]
+            guild_id = int(parts[2])
+            if interaction.guild.id != guild_id:
+                return
+        except Exception:
+            return
+        try:
+            if not interaction.response.is_done():
+                try:
+                    # Try to defer
+                    try:
+                        await interaction.response.defer()
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        bot = self.bot
+        if action == "kick":
+            view = discord.ui.LayoutView(timeout=None)
+            container = ui.Container()
+            container.add_item(ui.TextDisplay("**Set No-Chat channel**"))
+            row = ui.ActionRow()
+            ch = ui.ChannelSelect(channel_types=[discord.ChannelType.text], placeholder="Select channel")
+            row.add_item(ch)
+            container.add_item(row)
+            container.add_item(ui.TextDisplay("Pick a channel above or go back."))
+            back_row = ui.ActionRow()
+            back_btn = ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+            async def _back_k(i: discord.Interaction):
+                try:
+                    v = build_settings_view(bot, i.guild)
+                    try:
+                        bot.add_view(v)
+                    except Exception:
+                        pass
+                    if not i.response.is_done():
+                        await i.response.edit_message(view=v)
+                    else:
+                        try:
+                            await i.edit_original_response(view=v)
+                        except Exception:
+                            try:
+                                if i.message:
+                                    await i.followup.edit_message(i.message.id, view=v)
+                                else:
+                                    await i.followup.send(view=v, ephemeral=True)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+            back_btn.callback = _back_k
+            back_row.add_item(back_btn)
+            container.add_item(back_row)
+            view.add_item(container)
+            async def _cb(i: discord.Interaction, select: discord.ui.ChannelSelect):
+                bot.guild_config(i.guild.id)["kick_channel_id"] = str(select.values[0].id)
+                bot.save_config()
+                try:
+                    v = build_settings_view(bot, i.guild)
+                    try:
+                        bot.add_view(v)
+                    except Exception:
+                        pass
+                    if not i.response.is_done():
+                        await i.response.edit_message(view=v)
+                    else:
+                        try:
+                            await i.edit_original_response(view=v)
+                        except Exception:
+                            try:
+                                if i.message:
+                                    await i.followup.edit_message(i.message.id, view=v)
+                                else:
+                                    await i.followup.send(view=v, ephemeral=True)
+                            except Exception:
+                                pass
+                except Exception:
+                    try:
+                        await i.followup.send("Updated.", ephemeral=True)
+                    except Exception:
+                        pass
+            ch.callback = _cb
+            try:
+                bot.add_view(view)
+            except Exception:
+                pass
+            try:
+                if interaction.response.is_done():
+                    try:
+                        await interaction.edit_original_response(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            await interaction.followup.send(view=view, ephemeral=True)
+                else:
+                    try:
+                        await interaction.response.edit_message(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            await interaction.followup.send(view=view, ephemeral=True)
+            except Exception:
+                try:
+                    await interaction.followup.send(view=view, ephemeral=True)
+                except Exception:
+                    pass
+            return
+        elif action == "kickaction":
+            config = bot.guild_config(interaction.guild.id)
+            config["kick_action"] = "kick" if (config.get("kick_action") or "kick") == "ban" else "ban"
+            bot.save_config()
+            try:
+                view = build_settings_view(bot, interaction.guild)
+                try:
+                    bot.add_view(view)
+                except Exception:
+                    pass
+                if interaction.response.is_done():
+                    try:
+                        await interaction.edit_original_response(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            await interaction.followup.send(view=view, ephemeral=True)
+                else:
+                    try:
+                        await interaction.response.edit_message(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            await interaction.followup.send(view=view, ephemeral=True)
+            except Exception:
+                try:
+                    view = build_settings_view(bot, interaction.guild)
+                    await interaction.followup.send(view=view, ephemeral=True)
+                except Exception:
+                    pass
+            return
+        elif action == "log":
+            view = discord.ui.LayoutView(timeout=None)
+            container = ui.Container()
+            container.add_item(ui.TextDisplay("**Set Log channel**"))
+            row = ui.ActionRow()
+            ch = ui.ChannelSelect(channel_types=[discord.ChannelType.text], placeholder="Select channel")
+            row.add_item(ch)
+            container.add_item(row)
+            container.add_item(ui.TextDisplay("Pick a channel above or go back."))
+            back_row = ui.ActionRow()
+            back_btn = ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+            async def _back_l(i: discord.Interaction):
+                try:
+                    v = build_settings_view(bot, i.guild)
+                    try:
+                        bot.add_view(v)
+                    except Exception:
+                        pass
+                    if not i.response.is_done():
+                        await i.response.edit_message(view=v)
+                    else:
+                        try:
+                            await i.edit_original_response(view=v)
+                        except Exception:
+                            try:
+                                if i.message:
+                                    await i.followup.edit_message(i.message.id, view=v)
+                                else:
+                                    await i.followup.send(view=v, ephemeral=True)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+            back_btn.callback = _back_l
+            back_row.add_item(back_btn)
+            container.add_item(back_row)
+            view.add_item(container)
+            async def _cb(i: discord.Interaction, select: discord.ui.ChannelSelect):
+                bot.guild_config(i.guild.id)["log_channel_id"] = str(select.values[0].id)
+                bot.save_config()
+                try:
+                    v = build_settings_view(bot, i.guild)
+                    try:
+                        bot.add_view(v)
+                    except Exception:
+                        pass
+                    if not i.response.is_done():
+                        await i.response.edit_message(view=v)
+                    else:
+                        try:
+                            await i.edit_original_response(view=v)
+                        except Exception:
+                            try:
+                                if i.message:
+                                    await i.followup.edit_message(i.message.id, view=v)
+                                else:
+                                    await i.followup.send(view=v, ephemeral=True)
+                            except Exception:
+                                pass
+                except Exception:
+                    try:
+                        await i.followup.send("Updated.", ephemeral=True)
+                    except Exception:
+                        pass
+            ch.callback = _cb
+            try:
+                bot.add_view(view)
+            except Exception:
+                pass
+            try:
+                if interaction.response.is_done():
+                    try:
+                        await interaction.edit_original_response(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            await interaction.followup.send(view=view, ephemeral=True)
+                else:
+                    try:
+                        await interaction.response.edit_message(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            await interaction.followup.send(view=view, ephemeral=True)
+            except Exception:
+                try:
+                    await interaction.followup.send(view=view, ephemeral=True)
+                except Exception:
+                    pass
+            return
+        elif action == "adminroles":
+            try:
+                view = build_roles_panel_view(bot, interaction.guild)
+                if interaction.response.is_done():
+                    try:
+                        await interaction.edit_original_response(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            try:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                            except Exception:
+                                pass
+                else:
+                    try:
+                        await interaction.response.edit_message(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            try:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                            except Exception:
+                                pass
+            except Exception:
+                try:
+                    if interaction.response.is_done():
+                        try:
+                            await interaction.edit_original_response(embed=build_roles_panel_embed(bot, interaction.guild), view=RolesPanelView(bot, interaction.guild))
+                        except Exception:
+                            await interaction.followup.send("Opened roles panel.", ephemeral=True)
+                    else:
+                        try:
+                            await interaction.response.edit_message(embed=build_roles_panel_embed(bot, interaction.guild), view=RolesPanelView(bot, interaction.guild))
+                        except Exception:
+                            await interaction.followup.send("Opened roles panel.", ephemeral=True)
+                except Exception:
+                    try:
+                        await interaction.followup.send("Opened roles panel.", ephemeral=True)
+                    except Exception:
+                        pass
+            return
+        elif action == "exempt":
+            try:
+                view = build_roles_panel_view(bot, interaction.guild)
+                if interaction.response.is_done():
+                    try:
+                        await interaction.edit_original_response(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            try:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                            except Exception:
+                                pass
+                else:
+                    try:
+                        await interaction.response.edit_message(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            try:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                            except Exception:
+                                pass
+            except Exception:
+                try:
+                    if interaction.response.is_done():
+                        try:
+                            await interaction.edit_original_response(embed=build_roles_panel_embed(bot, interaction.guild), view=RolesPanelView(bot, interaction.guild))
+                        except Exception:
+                            await interaction.followup.send("Opened roles panel.", ephemeral=True)
+                    else:
+                        try:
+                            await interaction.response.edit_message(embed=build_roles_panel_embed(bot, interaction.guild), view=RolesPanelView(bot, interaction.guild))
+                        except Exception:
+                            await interaction.followup.send("Opened roles panel.", ephemeral=True)
+                except Exception:
+                    try:
+                        await interaction.followup.send("Opened roles panel.", ephemeral=True)
+                    except Exception:
+                        pass
+            return
+        elif action == "defrole":
+            view = discord.ui.LayoutView(timeout=None)
+            container = ui.Container()
+            container.add_item(ui.TextDisplay("**Set default role on join**"))
+            row = ui.ActionRow()
+            rs = ui.RoleSelect(placeholder="Select role", min_values=1, max_values=1)
+            row.add_item(rs)
+            container.add_item(row)
+            container.add_item(ui.TextDisplay("Pick a role above or go back."))
+            back_row = ui.ActionRow()
+            back_btn = ui.Button(label="Back", style=discord.ButtonStyle.secondary)
+            async def _back_d(i: discord.Interaction):
+                try:
+                    v = build_settings_view(bot, i.guild)
+                    try:
+                        bot.add_view(v)
+                    except Exception:
+                        pass
+                    if not i.response.is_done():
+                        await i.response.edit_message(view=v)
+                    else:
+                        try:
+                            await i.edit_original_response(view=v)
+                        except Exception:
+                            try:
+                                if i.message:
+                                    await i.followup.edit_message(i.message.id, view=v)
+                                else:
+                                    await i.followup.send(view=v, ephemeral=True)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+            back_btn.callback = _back_d
+            back_row.add_item(back_btn)
+            container.add_item(back_row)
+            view.add_item(container)
+            async def _cb(i: discord.Interaction, select: discord.ui.RoleSelect):
+                bot.guild_config(i.guild.id).setdefault("join", {})["base_role_id"] = str(select.values[0].id)
+                bot.save_config()
+                try:
+                    v = build_settings_view(bot, i.guild)
+                    try:
+                        bot.add_view(v)
+                    except Exception:
+                        pass
+                    if not i.response.is_done():
+                        await i.response.edit_message(view=v)
+                    else:
+                        try:
+                            await i.edit_original_response(view=v)
+                        except Exception:
+                            try:
+                                if i.message:
+                                    await i.followup.edit_message(i.message.id, view=v)
+                                else:
+                                    await i.followup.send(view=v, ephemeral=True)
+                            except Exception:
+                                pass
+                except Exception:
+                    try:
+                        await i.followup.send("Updated.", ephemeral=True)
+                    except Exception:
+                        pass
+            rs.callback = _cb
+            try:
+                bot.add_view(view)
+            except Exception:
+                pass
+            try:
+                if interaction.response.is_done():
+                    try:
+                        await interaction.edit_original_response(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            await interaction.followup.send(view=view, ephemeral=True)
+                else:
+                    try:
+                        await interaction.response.edit_message(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            await interaction.followup.send(view=view, ephemeral=True)
+            except Exception:
+                try:
+                    await interaction.followup.send(view=view, ephemeral=True)
+                except Exception:
+                    pass
+            return
+        elif action == "invites":
+            invites = await _fetch_invites(interaction.guild)
+            try:
+                view = build_invites_view(bot, invites, interaction.guild)
+                if interaction.response.is_done():
+                    try:
+                        await interaction.edit_original_response(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            try:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                            except Exception:
+                                pass
+                else:
+                    try:
+                        await interaction.response.edit_message(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            try:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                            except Exception:
+                                pass
+            except Exception:
+                try:
+                    if interaction.response.is_done():
+                        try:
+                            await interaction.edit_original_response(embed=build_invites_embed(bot, interaction.guild), view=InviteRolesView(bot, invites, interaction.guild))
+                        except Exception:
+                            await interaction.followup.send("Opened invites panel.", ephemeral=True)
+                    else:
+                        try:
+                            await interaction.response.edit_message(embed=build_invites_embed(bot, interaction.guild), view=InviteRolesView(bot, invites, interaction.guild))
+                        except Exception:
+                            await interaction.followup.send("Opened invites panel.", ephemeral=True)
+                except Exception:
+                    try:
+                        await interaction.followup.send("Opened invites panel.", ephemeral=True)
+                    except Exception:
+                        pass
+            return
+        elif action == "grant":
+            try:
+                try:
+                    if not interaction.response.is_done():
+                        try:
+                            await interaction.response.defer()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                try:
+                    view = build_grant_permissions_view(bot, interaction.guild)
+                    if interaction.response.is_done():
+                        try:
+                            await interaction.edit_original_response(view=view)
+                        except Exception:
+                            try:
+                                if interaction.message:
+                                    await interaction.followup.edit_message(interaction.message.id, view=view)
+                                else:
+                                    await interaction.followup.send(view=view, ephemeral=True)
+                            except Exception:
+                                try:
+                                    await interaction.followup.send(view=view, ephemeral=True)
+                                except Exception:
+                                    pass
+                    else:
+                        try:
+                            await interaction.response.edit_message(view=view)
+                        except Exception:
+                            try:
+                                if interaction.message:
+                                    await interaction.followup.edit_message(interaction.message.id, view=view)
+                                else:
+                                    await interaction.followup.send(view=view, ephemeral=True)
+                            except Exception:
+                                try:
+                                    await interaction.followup.send(view=view, ephemeral=True)
+                                except Exception:
+                                    pass
+                    return
+                except Exception:
+                    pass
+                # Fallback to old style
+                if interaction.response.is_done():
+                    try:
+                        await interaction.edit_original_response(embed=build_grant_permissions_embed(bot, interaction.guild), view=GrantPermissionsView(bot, interaction.guild))
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, embed=build_grant_permissions_embed(bot, interaction.guild), view=GrantPermissionsView(bot, interaction.guild))
+                            else:
+                                await interaction.followup.send(embed=build_grant_permissions_embed(bot, interaction.guild), view=GrantPermissionsView(bot, interaction.guild), ephemeral=True)
+                        except Exception:
+                            await interaction.followup.send("Opened grant panel.", ephemeral=True)
+                else:
+                    try:
+                        await interaction.response.edit_message(embed=build_grant_permissions_embed(bot, interaction.guild), view=GrantPermissionsView(bot, interaction.guild))
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, embed=build_grant_permissions_embed(bot, interaction.guild), view=GrantPermissionsView(bot, interaction.guild))
+                            else:
+                                await interaction.followup.send(embed=build_grant_permissions_embed(bot, interaction.guild), view=GrantPermissionsView(bot, interaction.guild), ephemeral=True)
+                        except Exception:
+                            await interaction.followup.send("Opened grant panel.", ephemeral=True)
+            except Exception:
+                try:
+                    await interaction.followup.send("Opened grant panel.", ephemeral=True)
+                except Exception:
+                    pass
+            return
+        elif action == "tz":
+            try:
+                await interaction.response.send_modal(TimezoneModal(bot, interaction.guild))
+            except Exception:
+                try:
+                    if interaction.response.is_done():
+                        try:
+                            await interaction.followup.send("Use /settings again.", ephemeral=True)
+                        except Exception:
+                            pass
+                    else:
+                        try:
+                            await interaction.response.send_message("Use /settings again.", ephemeral=True)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+            return
+        elif action == "menus":
+            try:
+                try:
+                    view = build_menus_view(bot, interaction.guild)
+                    if interaction.response.is_done():
+                        try:
+                            await interaction.edit_original_response(view=view)
+                        except Exception:
+                            try:
+                                if interaction.message:
+                                    await interaction.followup.edit_message(interaction.message.id, view=view)
+                                else:
+                                    await interaction.followup.send(view=view, ephemeral=True)
+                            except Exception:
+                                try:
+                                    await interaction.followup.send(view=view, ephemeral=True)
+                                except Exception:
+                                    pass
+                    else:
+                        try:
+                            await interaction.response.edit_message(view=view)
+                        except Exception:
+                            try:
+                                if interaction.message:
+                                    await interaction.followup.edit_message(interaction.message.id, view=view)
+                                else:
+                                    await interaction.followup.send(view=view, ephemeral=True)
+                            except Exception:
+                                try:
+                                    await interaction.followup.send(view=view, ephemeral=True)
+                                except Exception:
+                                    pass
+                    return
+                except Exception:
+                    pass
+                if interaction.response.is_done():
+                    try:
+                        await interaction.edit_original_response(embed=build_menus_embed(bot, interaction.guild), view=MenuPanelView(bot, interaction.guild))
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, embed=build_menus_embed(bot, interaction.guild), view=MenuPanelView(bot, interaction.guild))
+                            else:
+                                await interaction.followup.send(embed=build_menus_embed(bot, interaction.guild), view=MenuPanelView(bot, interaction.guild), ephemeral=True)
+                        except Exception:
+                            await interaction.followup.send("Opened menus panel.", ephemeral=True)
+                else:
+                    try:
+                        await interaction.response.edit_message(embed=build_menus_embed(bot, interaction.guild), view=MenuPanelView(bot, interaction.guild))
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, embed=build_menus_embed(bot, interaction.guild), view=MenuPanelView(bot, interaction.guild))
+                            else:
+                                await interaction.followup.send(embed=build_menus_embed(bot, interaction.guild), view=MenuPanelView(bot, interaction.guild), ephemeral=True)
+                        except Exception:
+                            await interaction.followup.send("Opened menus panel.", ephemeral=True)
+            except Exception:
+                try:
+                    await interaction.followup.send("Opened menus panel.", ephemeral=True)
+                except Exception:
+                    pass
+            return
+        elif action == "easter":
+            easter_eggs = bot.guild_config(interaction.guild.id).setdefault("easter_eggs", {})
+            easter_eggs["enabled"] = not bool(easter_eggs.get("enabled", True))
+            bot.save_config()
+            try:
+                view = build_settings_view(bot, interaction.guild)
+                try:
+                    bot.add_view(view)
+                except Exception:
+                    pass
+                if interaction.response.is_done():
+                    try:
+                        await interaction.edit_original_response(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            await interaction.followup.send(view=view, ephemeral=True)
+                else:
+                    try:
+                        await interaction.response.edit_message(view=view)
+                    except Exception:
+                        try:
+                            if interaction.message:
+                                await interaction.followup.edit_message(interaction.message.id, view=view)
+                            else:
+                                await interaction.followup.send(view=view, ephemeral=True)
+                        except Exception:
+                            await interaction.followup.send(view=view, ephemeral=True)
+            except Exception:
+                try:
+                    view = build_settings_view(bot, interaction.guild)
+                    await interaction.followup.send(view=view, ephemeral=True)
+                except Exception:
+                    pass
+            return
+        elif action == "sched":
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send("Create scheduled messages with `/schedule create`.", ephemeral=True)
+                else:
+                    await interaction.response.send_message("Create scheduled messages with `/schedule create`.", ephemeral=True)
+            except Exception:
+                pass
+            return
+        else:
+            return
+
     @app_commands.command(name="settings", description="Open the interactive server settings panel")
     @app_commands.guild_only()
     async def settings_cmd(self, interaction: discord.Interaction) -> None:
@@ -1463,6 +2822,21 @@ class Settings(commands.Cog):
                 "You need the Administrator permission or a bot admin role to use this command.", ephemeral=True
             )
             return
+        try:
+            view = build_settings_view(self.bot, interaction.guild)
+            try:
+                self.bot.add_view(view)
+            except Exception:
+                pass
+            await interaction.response.send_message(view=view, ephemeral=True)
+            return
+        except Exception:
+            try:
+                view = build_settings_view(self.bot, interaction.guild)
+                await interaction.response.send_message(view=view, ephemeral=True)
+                return
+            except Exception:
+                pass
         await interaction.response.send_message(
             embed=build_settings_embed(self.bot, interaction.guild),
             view=SettingsPanelView(self.bot, interaction.guild),
