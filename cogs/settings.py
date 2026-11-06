@@ -5,6 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from cogs.grant import grant_config, role_grant_problem
+from cogs.reaction_roles import MAX_MENU_ROLES
 from cogs.scheduler import is_valid_timezone
 from emoji_utils import MAX_EMOJI_LEN, is_valid_emoji
 
@@ -558,6 +559,12 @@ class RoleCustomizeModal(discord.ui.Modal):
         roles = self.menu.setdefault("roles", [])
         spec = next((item for item in roles if str(item["role_id"]) == str(self.role.id)), None)
         if spec is None:
+            if len(roles) >= MAX_MENU_ROLES:
+                await interaction.response.send_message(
+                    f"A menu can hold at most {MAX_MENU_ROLES} roles. Create another menu for the rest.",
+                    ephemeral=True,
+                )
+                return
             spec = {"role_id": str(self.role.id)}
             roles.append(spec)
         if label:
