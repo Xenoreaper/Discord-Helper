@@ -5,9 +5,10 @@ guild_id = 0                # 0 = der einzige Server des Bots. Nur nötig, wenn 
 kontakt = "fachschaft.it@hs-esslingen.de"
 timezone = "Europe/Berlin"
 afk_timeout_seconds = 900   # Erlaubt: 60, 300, 900, 1800, 3600
+events_color = "#EB459E"    # pink, für alle Event-Rollen
 
 [roles]
-member = "Mitglied"
+member = "IT"
 international = "International Student"
 admin = "admin"             # Muss exakt dem Namen der bestehenden Rolle entsprechen
 fachschaft = "Aktives Fachschaftsmitglied"
@@ -17,6 +18,7 @@ fsv = "Fachschaftsvertreter"
 honeypot = "exmatrikulation"
 rules = "regeln"
 rules_category = "Informationen"
+welcome = "willkommen"                # neu, hier landen die Join-Nachrichten von Discord
 menu_category = "Studienwahl"
 studiengangwahl = "studiengangwahl"   # neu
 semesterwahl = "semesterwahl"
@@ -74,37 +76,43 @@ honeypot_topic = "⚠️ Nicht schreiben: sofortiger Bann. / Do not post: instan
 
 # ---------------------------------------------------------------------------
 # Studiengänge: jede Kombination wird eine Rolle, z. B. "SWB SPO3".
-# Sie schaltet den jeweiligen fächerwahl-Kanal frei.
+# Sie schaltet den jeweiligen fächerwahl-Kanal frei und bekommt die Farbe des Studiengangs.
 # Quelle: Sammlung Modulhandbücher (Stand 27.02.2026). Nur SPOs, unter denen in den
 # letzten 8 Semestern (ab WiSe 2022/23) begonnen wurde.
 # ---------------------------------------------------------------------------
 [[studiengaenge]]
 key = "AIM"
+color = "#E67E22"   # orange
 channel = "fächerwahl-aim"
 spos = ["SPO2", "SPO2.3"]
 
 [[studiengaenge]]
 key = "IEP"
+color = "#9B59B6"   # lila
 channel = "fächerwahl-iep"
 spos = ["SPO1"]
 
 [[studiengaenge]]
 key = "ISB"
+color = "#2ECC71"   # grün
 channel = "fächerwahl-isb"
 spos = ["SPO1", "SPO1.1"]
 
 [[studiengaenge]]
 key = "SWB"
+color = "#E74C3C"   # rot
 channel = "fächerwahl-swb"
 spos = ["SPO7", "SPO8"]
 
 [[studiengaenge]]
 key = "TIB"
+color = "#3498DB"   # blau
 channel = "fächerwahl-tib"
 spos = ["SPO7", "SPO8"]
 
 [[studiengaenge]]
 key = "WKB"
+color = "#F1C40F"   # gelb
 channel = "fächerwahl-wkb"
 spos = ["SPO5", "SPO6"]
 
@@ -113,6 +121,11 @@ spos = ["SPO5", "SPO6"]
 roles = [
   "Semester 1", "Semester 2", "Semester 3", "Semester 4", "Semester 5", "Semester 6", "Semester 7",
   "Master 1", "Master 2", "Master 3",
+]
+# Gleiche Reihenfolge wie roles: Semester türkis von hell nach dunkel, Master braun.
+colors = [
+  "#A3E4D7", "#76D7C4", "#48C9B0", "#1ABC9C", "#17A589", "#148F77", "#117864",
+  "#D7B899", "#B9895E", "#8D5B2F",
 ]
 
 # Für alle Mitglieder lesbar. Schreiben kann, wer die Rolle per Button wählt.
@@ -157,161 +170,165 @@ channels = [
 [[fach_kategorien]]
 category = "Bachelor Grundstudium"
 faecher = [
-  { channel = "programmieren", label = "Programmieren" },
-  { channel = "it-security", label = "IT-Security" },
-  { channel = "informationtechnik", label = "Informationstechnik" },
-  { channel = "mathematik-1a", label = "Mathematik 1A" },
-  { channel = "mathematik-1b", label = "Mathematik 1B" },
-  { channel = "technische-physik", label = "Technische Physik" },
-  { channel = "betriebssysteme", label = "Betriebssysteme" },
-  { channel = "offensive-sicherheit", label = "Offensive Sicherheit" },
-  { channel = "mathematik-2", label = "Mathematik 2" },
-  { channel = "statistik", label = "Statistik" },
-  { channel = "diskrete-mathematik", label = "Diskrete Mathematik" },
-  { channel = "objektorientierte-systeme-1", label = "Objektorientierte Systeme 1" },
-  { channel = "mensch-computer-interaktion", label = "Mensch-Computer-Interaktion 1" },
-  { channel = "digitaltechnik-1", label = "Digitaltechnik 1" },
-  { channel = "elektrotechnik", label = "Elektrotechnik" },
-  { channel = "elektrotechnik-2", label = "Elektrotechnik 2" },
-  { channel = "wirtschaftsinformatik-1", label = "Wirtschaftsinformatik 1" },
-  { channel = "wirtschaftsinformatik-2", label = "Wirtschaftsinformatik 2" },
-  { channel = "bwl-und-vwl", label = "BWL und VWL" },
-  { channel = "rechnungswesen-1", label = "Rechnungswesen 1" },
-  { channel = "rechnungswesen-2", label = "Rechnungswesen 2" },
+  { channel = "programmieren", label = "Programmieren", emoji = "💻" },
+  { channel = "it-security", label = "IT-Security", emoji = "🔐" },
+  { channel = "informationtechnik", label = "Informationstechnik", emoji = "📡" },
+  { channel = "mathematik-1a", label = "Mathematik 1A", emoji = "📐" },
+  { channel = "mathematik-1b", label = "Mathematik 1B", emoji = "📐" },
+  { channel = "technische-physik", label = "Technische Physik", emoji = "🧲" },
+  { channel = "betriebssysteme", label = "Betriebssysteme", emoji = "⚙️" },
+  { channel = "offensive-sicherheit", label = "Offensive Sicherheit", emoji = "🗡️" },
+  { channel = "mathematik-2", label = "Mathematik 2", emoji = "📐" },
+  { channel = "statistik", label = "Statistik", emoji = "📊" },
+  { channel = "diskrete-mathematik", label = "Diskrete Mathematik", emoji = "🔢" },
+  { channel = "objektorientierte-systeme-1", label = "Objektorientierte Systeme 1", emoji = "🧩" },
+  { channel = "mensch-computer-interaktion", label = "Mensch-Computer-Interaktion 1", emoji = "🖱️" },
+  { channel = "digitaltechnik-1", label = "Digitaltechnik 1", emoji = "💡" },
+  { channel = "elektrotechnik", label = "Elektrotechnik", emoji = "⚡" },
+  { channel = "elektrotechnik-2", label = "Elektrotechnik 2", emoji = "⚡" },
+  { channel = "wirtschaftsinformatik-1", label = "Wirtschaftsinformatik 1", emoji = "🏢" },
+  { channel = "wirtschaftsinformatik-2", label = "Wirtschaftsinformatik 2", emoji = "🏢" },
+  { channel = "bwl-und-vwl", label = "BWL und VWL", emoji = "💶" },
+  { channel = "rechnungswesen-1", label = "Rechnungswesen 1", emoji = "🧾" },
+  { channel = "rechnungswesen-2", label = "Rechnungswesen 2", emoji = "🧾" },
 ]
 
 [[fach_kategorien]]
 category = "Bachelor Hauptstudium"
 faecher = [
-  { channel = "safety-and-security", label = "Safety and Security" },
-  { channel = "kryptografie", label = "Kryptografie" },
-  { channel = "datenbanken-1", label = "Datenbanken 1" },
-  { channel = "rechnernetze", label = "Rechnernetze" },
-  { channel = "softwaretechnik", label = "Softwaretechnik" },
-  { channel = "internet-technologien", label = "Internet-Technologien" },
-  { channel = "digitaltechnik-2", label = "Digitaltechnik 2" },
-  { channel = "elektronik", label = "Elektronik" },
-  { channel = "signale-und-systeme", label = "Signale und Systeme" },
-  { channel = "softwarearchitektur", label = "Softwarearchitektur" },
-  { channel = "objektorientierte-systeme-2", label = "Objektorientierte Systeme 2" },
-  { channel = "penetration-testing", label = "Penetration Testing" },
-  { channel = "projekt-it-sicherheit", label = "Projekt IT-Sicherheit" },
-  { channel = "netzwerksicherheit", label = "Netzwerksicherheit" },
-  { channel = "computerarchitektur", label = "Computerarchitektur" },
-  { channel = "algorithmen-und-datenstrukturen", label = "Algorithmen und Datenstrukturen" },
-  { channel = "projekt-softwaretechnik", label = "Projekt Softwaretechnik" },
-  { channel = "datenbanken-2", label = "Datenbanken 2" },
-  { channel = "betriebswirtschaftslehre", label = "Betriebswirtschaftslehre" },
-  { channel = "regelungstechnik-1", label = "Regelungstechnik 1" },
-  { channel = "sensoren-und-aktoren", label = "Sensoren und Aktoren" },
-  { channel = "digitale-signalverarbeitung", label = "Digitale Signalverarbeitung" },
-  { channel = "modellbildung-und-simulation", label = "Modellbildung und Simulation" },
-  { channel = "projekt-medieninformatik", label = "Projekt Medieninformatik" },
-  { channel = "projekt-mediengestaltung", label = "Projekt Mediengestaltung" },
-  { channel = "virtual-reality", label = "Virtual Reality" },
-  { channel = "geschäftsprozesse-1", label = "Geschäftsprozesse 1" },
-  { channel = "geschäftsprozesse-2", label = "Geschäftsprozesse 2" },
-  { channel = "hr-organisation-und-recht", label = "HR, Organisation und Recht" },
-  { channel = "datenmanagement", label = "Datenmanagement" },
-  { channel = "data-analytics", label = "Data Analytics" },
-  { channel = "marketing-und-sales", label = "Marketing und Sales" },
+  { channel = "safety-and-security", label = "Safety and Security / Dependable Systems", emoji = "🦺" },
+  { channel = "kryptografie", label = "Kryptografie", emoji = "🔑" },
+  { channel = "datenbanken-1", label = "Datenbanken 1", emoji = "🗄️" },
+  { channel = "rechnernetze", label = "Rechnernetze", emoji = "🔗" },
+  { channel = "softwaretechnik", label = "Softwaretechnik", emoji = "🛠️" },
+  { channel = "internet-technologien", label = "Internet-Technologien", emoji = "🌐" },
+  { channel = "digitaltechnik-2", label = "Digitaltechnik 2", emoji = "💡" },
+  { channel = "elektronik", label = "Elektronik", emoji = "🔋" },
+  { channel = "signale-und-systeme", label = "Signale und Systeme", emoji = "📈" },
+  { channel = "softwarearchitektur", label = "Softwarearchitektur", emoji = "🏗️" },
+  { channel = "objektorientierte-systeme-2", label = "Objektorientierte Systeme 2", emoji = "🧩" },
+  { channel = "penetration-testing", label = "Penetration Testing", emoji = "🕵️" },
+  { channel = "projekt-it-sicherheit", label = "Projekt IT-Sicherheit", emoji = "🔒" },
+  { channel = "netzwerksicherheit", label = "Netzwerksicherheit", emoji = "🛡️" },
+  { channel = "computerarchitektur", label = "Computerarchitektur", emoji = "🖥️" },
+  { channel = "algorithmen-und-datenstrukturen", label = "Algorithmen und Datenstrukturen", emoji = "🌳" },
+  { channel = "projekt-softwaretechnik", label = "Projekt Softwaretechnik", emoji = "🛠️" },
+  { channel = "datenbanken-2", label = "Datenbanken 2", emoji = "🗄️" },
+  { channel = "betriebswirtschaftslehre", label = "Betriebswirtschaftslehre", emoji = "💼" },
+  { channel = "regelungstechnik-1", label = "Regelungstechnik 1", emoji = "🎛️" },
+  { channel = "sensoren-und-aktoren", label = "Sensoren und Aktoren", emoji = "🦾" },
+  { channel = "digitale-signalverarbeitung", label = "Digitale Signalverarbeitung", emoji = "🎚️" },
+  { channel = "modellbildung-und-simulation", label = "Modellbildung und Simulation", emoji = "🌀" },
+  { channel = "projekt-medieninformatik", label = "Projekt Medieninformatik", emoji = "🎨" },
+  { channel = "projekt-mediengestaltung", label = "Projekt Mediengestaltung", emoji = "🖌️" },
+  { channel = "virtual-reality", label = "Virtual Reality", emoji = "🥽" },
+  { channel = "geschäftsprozesse-1", label = "Geschäftsprozesse 1", emoji = "🔀" },
+  { channel = "geschäftsprozesse-2", label = "Geschäftsprozesse 2", emoji = "🔀" },
+  { channel = "hr-organisation-und-recht", label = "HR, Organisation und Recht", emoji = "⚖️" },
+  { channel = "datenmanagement", label = "Datenmanagement", emoji = "🗃️" },
+  { channel = "data-analytics", label = "Data Analytics", emoji = "📈" },
+  { channel = "marketing-und-sales", label = "Marketing und Sales", emoji = "📣" },
 ]
 
 [[fach_kategorien]]
 category = "Praxissemester"
 faecher = [
-  { channel = "praktisches-studiensemester", label = "Praktisches Studiensemester" },
-  { channel = "schlüsselqualifikationen", label = "Schlüsselqualifikationen" },
+  { channel = "praktisches-studiensemester", label = "Praktisches Studiensemester", emoji = "🏭" },
+  { channel = "schlüsselqualifikationen", label = "Schlüsselqualifikationen", emoji = "🗣️" },
 ]
 
 [[fach_kategorien]]
 category = "Bachelor Semester 6"
 faecher = [
-  { channel = "regelungstechnik-2", label = "Regelungstechnik 2" },
-  { channel = "studienprojekt", label = "Studienprojekt" },
-  { channel = "parallele-und-verteilte-systeme", label = "Parallele und verteilte Systeme" },
-  { channel = "secure-software-development", label = "Secure Software Development" },
-  { channel = "informationssysteme", label = "Informationssysteme" },
-  { channel = "sprachen-und-automaten", label = "Sprachen und Automaten" },
-  { channel = "software-testing", label = "Software Testing" },
-  { channel = "digitale-forensik", label = "Digitale Forensik" },
-  { channel = "security-management-und-datenschutz", label = "Security Management und Datenschutz" },
-  { channel = "cyber-physical-networks", label = "Cyber-Physical Networks" },
-  { channel = "mensch-computer-interaktion-2", label = "Mensch-Computer-Interaktion 2" },
-  { channel = "projekt-computeranimation", label = "Projekt Computeranimation" },
-  { channel = "mobile-apps-und-ux", label = "Mobile Apps und UX" },
-  { channel = "digitale-medien", label = "Digitale Medien" },
-  { channel = "management", label = "Management" },
-  { channel = "informationsmanagement", label = "Informationsmanagement" },
-  { channel = "business-analytics", label = "Business Analytics" },
-  { channel = "solution-architecture", label = "Solution Architecture" },
-  { channel = "business-simulation", label = "Business Simulation" },
-  { channel = "vertiefungsmodule", label = "Vertiefungsmodule" },   # Angebot wechselt jedes Semester
+  { channel = "regelungstechnik-2", label = "Regelungstechnik 2", emoji = "🎛️" },
+  { channel = "studienprojekt", label = "Studienprojekt", emoji = "🚀" },
+  { channel = "parallele-und-verteilte-systeme", label = "Parallele und verteilte Systeme", emoji = "🔄" },
+  { channel = "secure-software-development", label = "Secure Software Development", emoji = "🔏" },
+  { channel = "informationssysteme", label = "Informationssysteme", emoji = "🖇️" },
+  { channel = "sprachen-und-automaten", label = "Sprachen und Automaten", emoji = "🔤" },
+  { channel = "software-testing", label = "Software Testing", emoji = "🧪" },
+  { channel = "digitale-forensik", label = "Digitale Forensik", emoji = "🔎" },
+  { channel = "security-management-und-datenschutz", label = "Security Management und Datenschutz", emoji = "📋" },
+  # TIB-Vertiefungen Autonome Systeme und Cyber-physische Systeme. Gleiche Veranstaltungen teilen sich einen Chat.
+  { channel = "cyber-physical-networks", label = "Cyber-Physical Networks / Embedded Systems Communication", emoji = "🛰️" },
+  { channel = "systems-design", label = "Autonomous / Embedded Systems Design", emoji = "🔩" },
+  { channel = "machine-vision", label = "Machine Vision", emoji = "👁️" },
+  { channel = "large-language-models", label = "Large Language Models / Machine Learning", emoji = "🗨️" },
+  { channel = "mensch-computer-interaktion-2", label = "Mensch-Computer-Interaktion 2", emoji = "🖱️" },
+  { channel = "projekt-computeranimation", label = "Projekt Computeranimation", emoji = "🎞️" },
+  { channel = "mobile-apps-und-ux", label = "Mobile Apps und UX", emoji = "📱" },
+  { channel = "digitale-medien", label = "Digitale Medien", emoji = "🎬" },
+  { channel = "management", label = "Management", emoji = "🧭" },
+  { channel = "informationsmanagement", label = "Informationsmanagement", emoji = "🗂️" },
+  { channel = "business-analytics", label = "Business Analytics", emoji = "📉" },
+  { channel = "solution-architecture", label = "Solution Architecture", emoji = "🏛️" },
+  { channel = "business-simulation", label = "Business Simulation", emoji = "🎯" },
 ]
 
 [[fach_kategorien]]
 category = "Bachelor Semester 7"
 faecher = [
-  { channel = "bachelorarbeit", label = "Bachelorarbeit" },
-  { channel = "wissenschaftliche-vertiefung", label = "Wissenschaftliche Vertiefung" },
+  { channel = "bachelorarbeit", label = "Bachelorarbeit", emoji = "🎓" },
+  { channel = "wissenschaftliche-vertiefung", label = "Wissenschaftliche Vertiefung", emoji = "🔬" },
 ]
 
 [[fach_kategorien]]
 category = "Master"
 faecher = [
-  { channel = "theoretische-informatik", label = "Theoretische Informatik" },
-  { channel = "security-engineering", label = "Security Engineering" },
-  { channel = "forschungsprojekt-1", label = "Forschungsprojekt 1" },
-  { channel = "advanced-software-engineering", label = "Advanced Software Engineering" },
-  { channel = "künstliche-intelligenz", label = "Künstliche Intelligenz" },
-  { channel = "forschungsprojekt-2", label = "Forschungsprojekt 2" },
-  { channel = "master-thesis", label = "Master-Thesis" },
-  { channel = "publikation", label = "Publikation" },
-  { channel = "advanced-control", label = "Advanced Control for Autonomous Systems" },
-  { channel = "data-fusion", label = "Data Fusion" },
-  { channel = "high-performance-computing", label = "High Performance Computing" },
-  { channel = "mobile-communication", label = "Mobile Communication" },
-  { channel = "motion-planning", label = "Motion Planning for Autonomous Systems" },
-  { channel = "advanced-data-mining", label = "Advanced Data Mining" },
-  { channel = "advanced-data-models", label = "Advanced Data Models" },
-  { channel = "business-intelligence", label = "Business Intelligence" },
-  { channel = "cloud-computing", label = "Cloud Computing" },
-  { channel = "time-series-analytics", label = "Intelligent Time Series Analytics" },
-  { channel = "information-security-management", label = "Information Security Management" },
-  { channel = "network-security", label = "Network Security" },
-  { channel = "secure-coding", label = "Secure Coding" },
-  { channel = "web-security", label = "Web Security" },
+  { channel = "theoretische-informatik", label = "Theoretische Informatik", emoji = "♾️" },
+  { channel = "security-engineering", label = "Security Engineering", emoji = "🛡️" },
+  { channel = "forschungsprojekt-1", label = "Forschungsprojekt 1", emoji = "🔭" },
+  { channel = "advanced-software-engineering", label = "Advanced Software Engineering", emoji = "🏗️" },
+  { channel = "künstliche-intelligenz", label = "Künstliche Intelligenz", emoji = "🤖" },
+  { channel = "forschungsprojekt-2", label = "Forschungsprojekt 2", emoji = "🔭" },
+  { channel = "master-thesis", label = "Master-Thesis", emoji = "🎓" },
+  { channel = "publikation", label = "Publikation", emoji = "📝" },
+  { channel = "advanced-control", label = "Advanced Control for Autonomous Systems", emoji = "🎛️" },
+  { channel = "data-fusion", label = "Data Fusion", emoji = "🧬" },
+  { channel = "high-performance-computing", label = "High Performance Computing", emoji = "🚀" },
+  { channel = "mobile-communication", label = "Mobile Communication", emoji = "📶" },
+  { channel = "motion-planning", label = "Motion Planning for Autonomous Systems", emoji = "🗺️" },
+  { channel = "advanced-data-mining", label = "Advanced Data Mining", emoji = "⛏️" },
+  { channel = "advanced-data-models", label = "Advanced Data Models", emoji = "🧱" },
+  { channel = "business-intelligence", label = "Business Intelligence", emoji = "💡" },
+  { channel = "cloud-computing", label = "Cloud Computing", emoji = "☁️" },
+  { channel = "time-series-analytics", label = "Intelligent Time Series Analytics", emoji = "📈" },
+  { channel = "information-security-management", label = "Information Security Management", emoji = "📋" },
+  { channel = "network-security", label = "Network Security", emoji = "🛡️" },
+  { channel = "secure-coding", label = "Secure Coding", emoji = "🔏" },
+  { channel = "web-security", label = "Web Security", emoji = "🌐" },
 ]
 
 [[fach_kategorien]]
 category = "Wahlfächer"
 faecher = [
-  { channel = "applied-artificial-intelligence", label = "Applied Artificial Intelligence" },
-  { channel = "audiotechnik", label = "Audiotechnik" },
-  { channel = "automotive-radar", label = "Automotive Radar" },
-  { channel = "clean-software", label = "Clean Software" },
-  { channel = "digitale-ethik-und-ki-ethik", label = "Digitale Ethik & KI-Ethik" },
-  { channel = "digitale-fotografie", label = "Digitale Fotografie" },
-  { channel = "from-modeling-to-compositing", label = "From Modeling to Compositing" },
-  { channel = "informationspsychologie", label = "Informationspsychologie" },
-  { channel = "internet-of-things-ecosystems", label = "Internet of Things Ecosystems" },
-  { channel = "kfz-systeme", label = "Kfz-Systeme" },
-  { channel = "llm-gestützte-softwareentwicklung", label = "LLM-gestützte Softwareentwicklung" },
-  { channel = "numerische-methoden", label = "Numerische Methoden" },
-  { channel = "systemarchitektur-mit-dotnet", label = "Systemarchitektur mit .NET" },
-  { channel = "video-postproduction", label = "Video Postproduction" },
-  { channel = "videoproduktion", label = "Videoproduktion" },
-  { channel = "wirtschaftspsychologie", label = "Wirtschaftspsychologie" },
+  { channel = "applied-artificial-intelligence", label = "Applied Artificial Intelligence", emoji = "🤖" },
+  { channel = "audiotechnik", label = "Audiotechnik", emoji = "🎧" },
+  { channel = "automotive-radar", label = "Automotive Radar", emoji = "🚗" },
+  { channel = "clean-software", label = "Clean Software", emoji = "🧹" },
+  { channel = "digitale-ethik-und-ki-ethik", label = "Digitale Ethik & KI-Ethik", emoji = "⚖️" },
+  { channel = "digitale-fotografie", label = "Digitale Fotografie", emoji = "📷" },
+  { channel = "from-modeling-to-compositing", label = "From Modeling to Compositing", emoji = "🧊" },
+  { channel = "informationspsychologie", label = "Informationspsychologie", emoji = "🧠" },
+  { channel = "internet-of-things-ecosystems", label = "Internet of Things Ecosystems", emoji = "📟" },
+  { channel = "kfz-systeme", label = "Kfz-Systeme", emoji = "🚙" },
+  { channel = "llm-gestützte-softwareentwicklung", label = "LLM-gestützte Softwareentwicklung", emoji = "💬" },
+  { channel = "numerische-methoden", label = "Numerische Methoden", emoji = "🧮" },
+  { channel = "systemarchitektur-mit-dotnet", label = "Systemarchitektur mit .NET", emoji = "🟪" },
+  { channel = "video-postproduction", label = "Video Postproduction", emoji = "✂️" },
+  { channel = "videoproduktion", label = "Videoproduktion", emoji = "🎥" },
+  { channel = "wirtschaftspsychologie", label = "Wirtschaftspsychologie", emoji = "🤝" },
+  { channel = "sonstige-wahlfächer", label = "Sonstige Wahlfächer", emoji = "🎲" },   # alle Wahlpflichtfächer, die oben nicht einzeln stehen
 ]
 
 [[fach_kategorien]]
 category = "Ingenieurpädagogik"
 faecher = [
-  { channel = "erziehungswissenschaftliche-grundlagen", label = "Erziehungswissenschaftliche Grundlagen" },
-  { channel = "berufspädagogik", label = "Grundlagen der Berufspädagogik" },
-  { channel = "fachdidaktik", label = "Grundlagen der Fachdidaktik" },
-  { channel = "schulpraxis", label = "Schulpraxis" },
-  { channel = "service-learning", label = "Service Learning" },
+  { channel = "erziehungswissenschaftliche-grundlagen", label = "Erziehungswissenschaftliche Grundlagen", emoji = "📖" },
+  { channel = "berufspädagogik", label = "Grundlagen der Berufspädagogik", emoji = "🏫" },
+  { channel = "fachdidaktik", label = "Grundlagen der Fachdidaktik", emoji = "🧑‍🏫" },
+  { channel = "schulpraxis", label = "Schulpraxis", emoji = "🍎" },
+  { channel = "service-learning", label = "Service Learning", emoji = "🌱" },
 ]
 
 # ---------------------------------------------------------------------------
@@ -375,16 +392,28 @@ title = "SWB · 2. Semester"
 faecher = ["mathematik-2", "statistik", "betriebssysteme", "mensch-computer-interaktion", "diskrete-mathematik", "objektorientierte-systeme-1"]
 
 [[faecherwahl]]
-id = "swb-3"
+id = "swb-3-swt"
 channel = "fächerwahl-swb"
-title = "SWB · 3. Semester"
+title = "SWB · 3. Semester · Softwaretechnik"
 faecher = ["datenbanken-1", "rechnernetze", "softwarearchitektur", "internet-technologien", "softwaretechnik", "objektorientierte-systeme-2", "modellbildung-und-simulation"]
 
 [[faecherwahl]]
-id = "swb-4"
+id = "swb-3-smi"
 channel = "fächerwahl-swb"
-title = "SWB · 4. Semester"
-faecher = ["projekt-softwaretechnik", "projekt-medieninformatik", "projekt-mediengestaltung", "virtual-reality", "computerarchitektur", "datenbanken-2", "algorithmen-und-datenstrukturen", "betriebswirtschaftslehre"]
+title = "SWB · 3. Semester · Medieninformatik"
+faecher = ["datenbanken-1", "rechnernetze", "softwarearchitektur", "internet-technologien", "softwaretechnik", "objektorientierte-systeme-2"]
+
+[[faecherwahl]]
+id = "swb-4-swt"
+channel = "fächerwahl-swb"
+title = "SWB · 4. Semester · Softwaretechnik"
+faecher = ["projekt-softwaretechnik", "computerarchitektur", "datenbanken-2", "algorithmen-und-datenstrukturen", "betriebswirtschaftslehre"]
+
+[[faecherwahl]]
+id = "swb-4-smi"
+channel = "fächerwahl-swb"
+title = "SWB · 4. Semester · Medieninformatik"
+faecher = ["projekt-medieninformatik", "projekt-mediengestaltung", "virtual-reality", "algorithmen-und-datenstrukturen", "betriebswirtschaftslehre"]
 
 [[faecherwahl]]
 id = "swb-5"
@@ -393,10 +422,16 @@ title = "SWB · 5. Semester"
 faecher = ["praktisches-studiensemester", "schlüsselqualifikationen"]
 
 [[faecherwahl]]
-id = "swb-6"
+id = "swb-6-swt"
 channel = "fächerwahl-swb"
-title = "SWB · 6. Semester"
-faecher = ["studienprojekt", "informationssysteme", "secure-software-development", "software-testing", "sprachen-und-automaten", "parallele-und-verteilte-systeme", "projekt-computeranimation", "mobile-apps-und-ux", "digitale-medien", "mensch-computer-interaktion-2"]
+title = "SWB · 6. Semester · Softwaretechnik"
+faecher = ["studienprojekt", "informationssysteme", "secure-software-development", "software-testing", "sprachen-und-automaten", "parallele-und-verteilte-systeme"]
+
+[[faecherwahl]]
+id = "swb-6-smi"
+channel = "fächerwahl-swb"
+title = "SWB · 6. Semester · Medieninformatik"
+faecher = ["studienprojekt", "projekt-computeranimation", "mobile-apps-und-ux", "digitale-medien", "mensch-computer-interaktion-2", "parallele-und-verteilte-systeme"]
 
 [[faecherwahl]]
 id = "swb-7"
@@ -438,7 +473,7 @@ faecher = ["praktisches-studiensemester", "schlüsselqualifikationen"]
 id = "tib-6"
 channel = "fächerwahl-tib"
 title = "TIB · 6. Semester"
-faecher = ["regelungstechnik-2", "studienprojekt", "vertiefungsmodule"]
+faecher = ["regelungstechnik-2", "studienprojekt", "systems-design", "cyber-physical-networks", "safety-and-security", "machine-vision", "large-language-models"]
 
 [[faecherwahl]]
 id = "tib-7"
@@ -480,7 +515,7 @@ faecher = ["praktisches-studiensemester"]
 id = "iep-6"
 channel = "fächerwahl-iep"
 title = "IEP · 6. und 7. Semester"
-faecher = ["regelungstechnik-2", "vertiefungsmodule", "bachelorarbeit"]
+faecher = ["regelungstechnik-2", "systems-design", "cyber-physical-networks", "safety-and-security", "large-language-models", "bachelorarbeit"]
 
 [[faecherwahl]]
 id = "iep-7"
@@ -570,4 +605,4 @@ faecher = ["digitale-forensik", "penetration-testing", "information-security-man
 id = "wahlfaecher"
 channel = "fächerwahl-wahlfächer"
 title = "Wahlfächer"
-faecher = ["applied-artificial-intelligence", "audiotechnik", "automotive-radar", "clean-software", "digitale-ethik-und-ki-ethik", "digitale-fotografie", "from-modeling-to-compositing", "informationspsychologie", "internet-of-things-ecosystems", "kfz-systeme", "llm-gestützte-softwareentwicklung", "numerische-methoden", "systemarchitektur-mit-dotnet", "video-postproduction", "videoproduktion", "wirtschaftspsychologie"]
+faecher = ["applied-artificial-intelligence", "audiotechnik", "automotive-radar", "clean-software", "digitale-ethik-und-ki-ethik", "digitale-fotografie", "from-modeling-to-compositing", "informationspsychologie", "internet-of-things-ecosystems", "kfz-systeme", "llm-gestützte-softwareentwicklung", "numerische-methoden", "systemarchitektur-mit-dotnet", "video-postproduction", "videoproduktion", "wirtschaftspsychologie", "sonstige-wahlfächer"]

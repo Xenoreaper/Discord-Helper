@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 
 from bot import BASE_DIR, default_guild_config, validate_store
 from config_store import ConfigStore
+from emoji_utils import is_valid_emoji
 
 MAX_MENU_ROLES = 25
 
@@ -64,6 +65,16 @@ KINDS = {"text": discord.ChannelType.text, "voice": discord.ChannelType.voice}
 
 def spo_role(studiengang: dict, spo: str) -> str:
     return f'{studiengang["key"]} {spo}'
+
+
+def fach_emojis(layout: dict) -> dict[str, str]:
+    """Role name (the label) -> emoji shown on its button."""
+    return {
+        fach["label"]: fach["emoji"]
+        for group in layout.get("fach_kategorien", [])
+        for fach in group["faecher"]
+        if fach.get("emoji")
+    }
 
 
 def fach_labels(layout: dict) -> dict[str, str]:
@@ -148,7 +159,13 @@ def layout_errors(layout: dict) -> list[str]:
         errors.append(f'Fach "{name}" is listed twice in fach_kategorien.')
     if len(set(labels.values())) != len(labels):
         errors.append("Two subjects share a label, so they would share one role.")
-    known = {sg["channel"] for sg in layout["studiengaenge"]} | {layout["channels"]["wahlfaecher"]}
+    for label, emoji in fach_emojis(layout).items():
+        if not is_valid_emoji(emoji):
+            errors.append(f'"{label}" has an emoji Discord would not accept: {emoji!r}')
+    semester = layout["semester"]
+    if semester.get("colors") and len(semester["colors"]) != len(semester["roles"]):
+        errors.append("[semester] needs exactly one colour per role.")
+    known = {sg["channel"] for sg in layout["studiengaenge"]} | {layout["channels"].get("wahlfaecher")}
     seen_ids = set()
     for entry in layout.get("faecherwahl", []):
         if entry["id"] in seen_ids:
@@ -182,18 +199,28 @@ class Provisioner:
     def _role_key(self, key: str) -> discord.Role | None:
         return self.roles[self.layout["roles"][key]]
 
-    async def ensure_role(self, name: str, permissions: discord.Permissions | None = None) -> None:
+    async def ensure_role(
+        self, name: str, permissions: discord.Permissions | None = None, color: str | None = None
+    ) -> None:
+        colour = discord.Colour(int(color.lstrip("#"), 16)) if color else discord.Colour.default()
         matches = [role for role in self.guild.roles if role.name == name]
         if len(matches) > 1:
             self.warnings.append(f'{len(matches)} roles are named "{name}", using the first one.')
         if matches:
-            self.roles[name] = matches[0]
+            role = self.roles[name] = matches[0]
+            if color and role.colour != colour:
+                self.changes.append(f"set colour of {name}: {color}")
+                if self.apply:
+                    await role.edit(colour=colour, reason="provision.py")
             return
-        self.changes.append(f"create role: {name}")
+        self.changes.append(f"create role: {name}" + (f" ({color})" if color else ""))
         self.roles[name] = None
         if self.apply:
             self.roles[name] = await self.guild.create_role(
-                name=name, permissions=permissions or discord.Permissions.none(), reason="provision.py"
+                name=name,
+                permissions=permissions or discord.Permissions.none(),
+                colour=colour,
+                reason="provision.py",
             )
 
     async def ensure_category(self, name: str) -> discord.CategoryChannel | None:
@@ -244,7 +271,10 @@ class Provisioner:
             self.changes.append(f"set {label} on {channel.name}: {perms}")
             if self.apply:
                 current.update(**perms)
-                await channel.set_permissions(target, overwrite=current, reason="provision.py")
+                try:
+                    await channel.set_permissions(target, overwrite=current, reason="provision.py")
+                except discord.Forbidden:
+                    self.warnings.append(f"FAILED (missing permission): set {label} on {channel.name}: {perms}")
 
     def _warn_foreign_access(self, channel, allowed: set) -> None:
         for target, overwrite in channel.overwrites.items():
@@ -252,9 +282,15 @@ class Provisioner:
                 continue
             self.warnings.append(f'{channel.name}: "{target}" can see this private channel but is not in the layout.')
 
+    async def _keep_bot_access(self, channels: list) -> None:
+        """Must run before anything is restricted: once the bot can't see a channel or lacks a
+        permission there, Discord no longer lets it change that channel's permissions."""
+        await self.set_perms(channels, self.guild.me, "bot", view_channel=True)
+
     async def _private(self, channels: list, allowed_keys: list[str]) -> None:
         """Hidden from @everyone. Staff roles not named are explicitly locked out."""
         everyone = self.guild.default_role
+        await self._keep_bot_access(channels)
         await self.set_perms(channels, everyone, "@everyone", view_channel=False)
         allowed = set()
         for key in ("admin", "fachschaft", "fsv"):
@@ -267,17 +303,19 @@ class Provisioner:
             self._warn_foreign_access(channel, allowed)
 
     async def _hidden_for(self, channels: list, roles: list[tuple[discord.Role | None, str]]) -> None:
+        await self._keep_bot_access(channels)
         await self.set_perms(channels, self.guild.default_role, "@everyone", view_channel=False)
         for role, label in roles:
             await self.set_perms(channels, role, label, view_channel=True)
 
     async def _menu_channel(self, channels: list) -> None:
         """Read-only for people; the bot posts its menus here."""
-        await self.set_perms(channels, self.guild.default_role, "@everyone", **READ_ONLY)
-        await self.set_perms(channels, self._role_key("admin"), self.layout["roles"]["admin"], **WRITER)
+        await self._keep_bot_access(channels)
         await self.set_perms(
             channels, self.guild.me, "bot", embed_links=True, read_message_history=True, **WRITER
         )
+        await self.set_perms(channels, self.guild.default_role, "@everyone", **READ_ONLY)
+        await self.set_perms(channels, self._role_key("admin"), self.layout["roles"]["admin"], **WRITER)
 
     async def build_roles(self) -> None:
         layout = self.layout
@@ -287,11 +325,12 @@ class Provisioner:
             await self.ensure_role(names[key])
         for sg in layout["studiengaenge"]:
             for spo in sg["spos"]:
-                await self.ensure_role(spo_role(sg, spo))
-        for name in layout["semester"]["roles"]:
-            await self.ensure_role(name)
+                await self.ensure_role(spo_role(sg, spo), color=sg.get("color"))
+        semester = layout["semester"]
+        for name, color in zip(semester["roles"], semester.get("colors") or [None] * len(semester["roles"])):
+            await self.ensure_role(name, color=color)
         for event in layout["events"]:
-            await self.ensure_role(event["role"])
+            await self.ensure_role(event["role"], color=layout.get("events_color"))
         for label in fach_labels(layout).values():
             await self.ensure_role(label)
 
@@ -307,13 +346,31 @@ class Provisioner:
 
         rules = await self.ensure_channels(cfg["rules"], "text", cfg["rules_category"])
         self.channels[cfg["rules"]] = rules[0] if rules else None
-        await self.set_perms(rules, everyone, "@everyone", view_channel=True, read_message_history=True, **READ_ONLY)
         await self._menu_channel(rules)
+        await self.set_perms(rules, everyone, "@everyone", view_channel=True, read_message_history=True)
+
+    async def build_welcome_channel(self) -> None:
+        cfg = self.layout["channels"]
+        channels = await self.ensure_channels(cfg["welcome"], "text", cfg["rules_category"])
+        await self._menu_channel(channels)
+        if not channels or self.guild.system_channel != channels[0]:
+            self.changes.append(f"send join messages to: {cfg['welcome']}")
+            if self.apply:
+                await self._edit_guild(
+                    f"Server Settings > Overview > System Messages Channel: {cfg['welcome']}",
+                    system_channel=channels[0],
+                )
+
+    async def _edit_guild(self, manual_step: str, **fields) -> None:
+        try:
+            await self.guild.edit(reason="provision.py", **fields)
+        except discord.HTTPException as error:
+            self.warnings.append(f"MANUAL: Discord refused this ({error.text}), please set it by hand: {manual_step}")
 
     async def build_menu_channels(self) -> None:
         cfg = self.layout["channels"]
         category = cfg["menu_category"]
-        for name in (cfg["studiengangwahl"], cfg["semesterwahl"], cfg["wahlfaecher"], cfg["eventwahl"]):
+        for name in filter(None, (cfg["studiengangwahl"], cfg["semesterwahl"], cfg.get("wahlfaecher"), cfg["eventwahl"])):
             channels = await self.ensure_channels(name, "text", category)
             self.channels[name] = channels[0] if channels else None
             await self._menu_channel(channels)
@@ -370,7 +427,11 @@ class Provisioner:
         if afk and (self.guild.afk_channel != afk[0] or self.guild.afk_timeout != timeout):
             self.changes.append(f"set AFK channel: {cfg['afk']} after {timeout}s")
             if self.apply:
-                await self.guild.edit(afk_channel=afk[0], afk_timeout=timeout, reason="provision.py")
+                await self._edit_guild(
+                    f"Server Settings > Overview > Inactive Channel: {cfg['afk']}, {timeout // 60} minutes",
+                    afk_channel=afk[0],
+                    afk_timeout=timeout,
+                )
         elif not afk:
             self.changes.append(f"set AFK channel: {cfg['afk']} after {timeout}s")
 
@@ -409,6 +470,7 @@ class Provisioner:
         config.setdefault("temp_voice", {"channels": {}})["hub_channel_id"] = str(self.channels["hub"].id)
 
         existing = {menu["id"]: menu for menu in config.setdefault("role_menus", [])}
+        emojis = fach_emojis(self.layout)
         for spec in build_menus(self.layout):
             if not spec["entries"]:
                 self.warnings.append(f'Menu "{spec["id"]}" has no buttons and was skipped.')
@@ -428,9 +490,21 @@ class Provisioner:
                 mode=spec.get("mode", "toggle"),
                 roles=[
                     {"role_id": str(self.roles[role_name].id), "label": label}
+                    | ({"emoji": emojis[role_name]} if role_name in emojis else {})
                     for role_name, label in spec["entries"]
                 ],
             )
+
+        # Keep layout order so reposted menus appear in that order. Subject menus that left the layout are
+        # dropped, menus added by hand in /settings stay at the end.
+        order = {spec["id"]: index for index, spec in enumerate(build_menus(self.layout))}
+        for menu in config["role_menus"]:
+            if menu["id"] not in order and menu["id"].startswith("fach-"):
+                self.changes.append(f'remove menu from config: {menu["id"]} (delete its message by hand)')
+        config["role_menus"] = sorted(
+            (m for m in config["role_menus"] if m["id"] in order or not m["id"].startswith("fach-")),
+            key=lambda m: order.get(m["id"], len(order)),
+        )
 
     def check_manual_steps(self) -> None:
         guild = self.guild
@@ -450,7 +524,7 @@ class Provisioner:
             if role is None:
                 continue
             perms = role.permissions
-            if not (perms.moderate_members and perms.mute_members):
+            if key == "fsv" and not (perms.moderate_members and perms.mute_members):
                 self.warnings.append(f'MANUAL: give "{role.name}" the Timeout and Mute Members permissions.')
             if perms.kick_members or perms.ban_members:
                 self.warnings.append(f'MANUAL: remove Kick and Ban from "{role.name}", those stay with admins.')
@@ -463,6 +537,7 @@ class Provisioner:
     async def run(self, config: dict) -> None:
         await self.build_roles()
         await self.build_entry_channels()
+        await self.build_welcome_channel()
         await self.build_menu_channels()
         await self.build_fach_channels()
         await self.build_event_channels()
@@ -508,6 +583,20 @@ async def provision(layout: dict, apply: bool) -> None:
             print("Bot is missing permissions:", ", ".join(missing))
             if apply:
                 raise SystemExit("Nothing was changed. Fix the bot role and try again.")
+
+        # Discord only lets the bot set channel permissions for roles below its own.
+        above = [
+            role.name
+            for role in guild.roles
+            if role.name in {layout["roles"][key] for key in ("admin", "fachschaft", "fsv")}
+            and role >= guild.me.top_role
+        ]
+        if above:
+            print(
+                f"Note: the bot role is below {', '.join(above)}, so it cannot change their channel permissions. "
+                "That is fine once the server is set up. For a first setup, drag it to the top and give it "
+                "Administrator while this runs, then sort the roles back as described in the README."
+            )
 
         provisioner = Provisioner(guild, layout, apply)
         try:

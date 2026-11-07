@@ -12,6 +12,7 @@ from emoji_utils import MAX_EMOJI_LEN, is_valid_emoji
 log = logging.getLogger("rolebot.settings")
 
 _SAVE_FAILED = "Could not save config.json — the change is in memory only and will be lost on restart."
+MAX_LISTED_MENUS = 20
 
 
 def _channel_mention(bot: commands.Bot, channel_id) -> str:
@@ -127,13 +128,8 @@ def build_settings_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Emb
     )
     menus = config.get("role_menus", [])
     if menus:
-        lines = []
-        for menu in menus:
-            channel = guild.get_channel(int(menu["channel_id"])) if menu.get("channel_id") else None
-            name = menu.get("name") or menu["id"]
-            posted = "posted" if menu.get("message_id") else "not posted"
-            lines.append(f"{name} — {channel.mention if channel else 'no channel'} ({len(menu.get('roles', []))} roles, {posted})")
-        value = "\n".join(lines)
+        posted = sum(1 for menu in menus if menu.get("message_id"))
+        value = f"{len(menus)} menus, {posted} posted — details in the Role menus panel"
     else:
         value = "none — create one in the Role menus panel"
     embed.add_field(name="Role menus", value=value, inline=False)
@@ -155,7 +151,15 @@ def build_menus_embed(bot: commands.Bot, guild: discord.Guild) -> discord.Embed:
     if not menus:
         embed.add_field(name="No menus yet", value="Press **New menu** to create your first one.", inline=False)
         return embed
-    for menu in menus:
+    # Discord allows 25 fields per embed; keep room for the result field.
+    shown = menus[:MAX_LISTED_MENUS]
+    if len(menus) > len(shown):
+        posted = sum(1 for menu in menus if menu.get("message_id"))
+        embed.set_footer(
+            text=f"Showing {len(shown)} of {len(menus)} menus ({posted} posted). "
+            "Change them in server_layout.toml and run provision.py."
+        )
+    for menu in shown:
         channel = guild.get_channel(int(menu["channel_id"])) if menu.get("channel_id") else None
         name = menu.get("name") or menu["id"]
         role_count = len(menu.get("roles", []))
@@ -937,13 +941,15 @@ class MenuPanelView(discord.ui.View):
 
     @discord.ui.button(label="Repost / refresh all", style=discord.ButtonStyle.secondary)
     async def repost_all(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        # Posting many menus takes longer than the 3 seconds Discord waits for an answer.
+        await interaction.response.defer()
         cog = self.bot.get_cog("ReactionRoles")
         posted = failed = 0
         if cog is not None:
             posted, failed = await cog.refresh_all(self.guild)
         embed = build_menus_embed(self.bot, self.guild)
         embed.add_field(name="Result", value=f"{posted} posted/refreshed, {failed} failed", inline=False)
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             embed=embed,
             view=MenuPanelView(self.bot, self.guild),
         )
@@ -1484,6 +1490,7 @@ class Settings(commands.Cog):
                 "You need the Administrator permission or a bot admin role to use this command.", ephemeral=True
             )
         else:
+            log.error("/settings failed", exc_info=error)
             await interaction.response.send_message("Something went wrong, please try again.", ephemeral=True)
 
 

@@ -20,7 +20,7 @@ Dadurch kann der Bot Fachschaftsmitglieder nicht bannen. Schreibt ein gehackter 
 
 `admin` steht ganz oben und sieht die Fachschaftskanäle trotzdem nicht, solange die Rolle kein Administrator-Recht hat. Mit „Rollen verwalten“ können sich Admins die Fachschaftsrollen aber selbst geben. Das ist technisch nicht verhindert, aber im Audit-Log sichtbar.
 
-`Fachschaftsvertreter` und `Aktives Fachschaftsmitglied` dürfen Leute stummschalten (Rechte „Timeout“ und „Mitglieder stummschalten“). Kicken und Bannen bleibt bei `admin`.
+`Fachschaftsvertreter` darf Leute stummschalten (Rechte „Timeout“ und „Mitglieder stummschalten“). `Aktives Fachschaftsmitglied` hat darüber hinaus keine Moderationsrechte. Kicken und Bannen bleibt bei `admin`.
 
 ## Ersteinrichtung
 
@@ -50,20 +50,22 @@ Danach `server_layout.toml` prüfen. Ist der Bot auf mehreren Servern, muss dort
 ```bash
 docker compose build
 docker compose stop bot
-docker compose run --rm bot python provision.py           # zeigt nur die Änderungen
-docker compose run --rm bot python provision.py --apply   # führt sie aus
+docker compose run --rm --build bot python provision.py           # zeigt nur die Änderungen
+docker compose run --rm --build bot python provision.py --apply   # führt sie aus
 docker compose up -d
 ```
 
 Der Bot muss beim Einrichten gestoppt sein, sonst überschreibt er das Ergebnis in `config.json`.
 
+Für `--apply` muss die Bot-Rolle vorübergehend ganz oben stehen und das Recht **Administrator** haben. Sonst lässt Discord den Bot keine Kanalrechte für höhere Rollen und für Kanäle setzen, die durch bestehende Rechte gesperrt sind. Danach Administrator wieder entfernen und die Rollen wie oben sortieren.
+
 ### 4. Manuelle Schritte
 
 Diese Schritte bleiben bewusst Handarbeit, weil sie den Zugang zum Server ändern. Reihenfolge einhalten:
 
-1. Rollen wie oben beschrieben sortieren und den beiden Fachschaftsrollen die Rechte „Timeout“ und „Mitglieder stummschalten“ geben.
+1. Rollen wie oben beschrieben sortieren und `Fachschaftsvertreter` die Rechte „Timeout“ und „Mitglieder stummschalten“ geben.
 2. In `/settings` > Role menus den Button **Repost / refresh all** drücken.
-3. Bei `admin` das Recht **Administrator** entfernen. Stattdessen aktivieren: Kanäle verwalten, Rollen verwalten, Server verwalten, Audit-Log ansehen, Kicken, Bannen, Timeout, Nachrichten verwalten, Nachrichten anpinnen, Mitglieder stummschalten, verschieben und taub schalten sowie die normalen Rechte aus `Mitglied`. Vorher prüfen, dass der Server-Eigentümer erreichbar ist.
+3. Bei `admin` das Recht **Administrator** entfernen. Stattdessen aktivieren: Kanäle verwalten, Rollen verwalten, Server verwalten, Audit-Log ansehen, Kicken, Bannen, Timeout, Nachrichten verwalten, Nachrichten anpinnen, Mitglieder stummschalten, verschieben und taub schalten sowie die normalen Rechte aus `IT`. Vorher prüfen, dass der Server-Eigentümer erreichbar ist.
 4. Bei `@everyone` alle Serverrechte entfernen. Ab jetzt sieht man ohne Regelannahme nur noch `#regeln` und `#exmatrikulation`. Das gilt auch für bestehende Mitglieder, die den Button noch einmal drücken müssen.
 5. `python provision.py` erneut ohne `--apply` ausführen. Es sollte keine `MANUAL`-Warnung mehr erscheinen.
 
@@ -93,4 +95,4 @@ Admins werden vom Honeypot nicht gebannt, deshalb einen Account ohne besondere R
 | Sichern | `config.json` und `.env` |
 | Einstellungen ändern | `/settings` auf Discord |
 
-Rollen und Kanäle, die aus dem Layout entfernt werden, bleiben auf Discord bestehen und müssen von Hand gelöscht werden. Dasselbe gilt für das zugehörige Menü.
+Rollen und Kanäle, die aus dem Layout entfernt werden, bleiben auf Discord bestehen und müssen von Hand gelöscht werden. Entfernte Fachmenüs nimmt `provision.py` aus der Konfiguration, ihre alte Nachricht muss aber ebenfalls von Hand gelöscht werden. Sollen sich Menüs in einem Kanal neu sortieren, den Kanal löschen und Abschnitt 3 ausführen. Er wird dann neu angelegt und alle Menüs werden in Layout-Reihenfolge gepostet.
