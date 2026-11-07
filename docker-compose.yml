@@ -12,6 +12,5 @@ services:
       - .env
     volumes:
       - ./config.json:/app/config.json
-      - ./server_layout.toml:/app/server_layout.toml:ro
     init: true
     stop_grace_period: 10s

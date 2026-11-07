@@ -31,8 +31,6 @@ def default_guild_config() -> dict:
         "scheduled_messages": [],
         "timezone": "UTC",
         "easter_eggs": {},
-        "international_role_id": None,
-        "temp_voice": {"hub_channel_id": None, "channels": {}},
     }
 
 
@@ -128,8 +126,6 @@ def validate_config(config: dict) -> None:
 
     _validate_easter_eggs(config)
 
-    _validate_student_settings(config)
-
     menus = config.setdefault("role_menus", [])
     if not isinstance(menus, list):
         raise SystemExit('config.json "role_menus" must be a list.')
@@ -156,8 +152,6 @@ def validate_config(config: dict) -> None:
             value = menu.get(key)
             if value not in (None, "") and not _is_id(value):
                 raise SystemExit(f'config.json "role_menus[{i}].{key}" must be a numeric ID or null.')
-        if menu.get("mode") not in (None, "toggle", "accept"):
-            raise SystemExit(f'config.json "role_menus[{i}].mode" must be "toggle" or "accept".')
 
         roles = menu.get("roles")
         if roles is None and menu.get("role_ids") is not None:
@@ -269,24 +263,6 @@ def _validate_easter_eggs(config: dict) -> None:
             raise SystemExit(f'config.json "easter_eggs.{key}" must be a string or null.')
 
 
-def _validate_student_settings(config: dict) -> None:
-    value = config.get("international_role_id")
-    if value not in (None, "") and not _is_id(value):
-        raise SystemExit('config.json "international_role_id" must be a numeric role ID or null.')
-
-    temp_voice = config.setdefault("temp_voice", {})
-    if not isinstance(temp_voice, dict):
-        raise SystemExit('config.json "temp_voice" must be an object.')
-    hub = temp_voice.setdefault("hub_channel_id", None)
-    if hub not in (None, "") and not _is_id(hub):
-        raise SystemExit('config.json "temp_voice.hub_channel_id" must be a numeric channel ID or null.')
-    channels = temp_voice.setdefault("channels", {})
-    if not isinstance(channels, dict) or not all(
-        _is_id(channel_id) and _is_id(owner_id) for channel_id, owner_id in channels.items()
-    ):
-        raise SystemExit('config.json "temp_voice.channels" must map channel IDs to owner IDs.')
-
-
 def _migrate_legacy(store: dict) -> None:
     if "guild_id" not in store:
         return
@@ -356,7 +332,6 @@ class RoleBot(commands.Bot):
             "cogs.grant",
             "cogs.scheduler",
             "cogs.easter_eggs",
-            "cogs.temp_voice",
         ):
             await self.load_extension(extension)
 
