@@ -1,16 +1,9 @@
-import logging
 import re
 
 import discord
 from discord.ext import commands
 
 from emoji_utils import is_valid_emoji
-from i18n import member_language, tr
-
-log = logging.getLogger("rolebot.reaction_roles")
-
-# Discord allows 5 rows of 5 buttons on one message.
-MAX_MENU_ROLES = 25
 
 _INLINE_REF = re.compile(r"(?<![\w<#@/&?])([#@])([A-Za-z0-9_.\-]+)")
 
@@ -69,16 +62,7 @@ def _menu_guild(bot: commands.Bot, menu_spec: dict) -> discord.Guild | None:
 
 def _build_buttons(bot: commands.Bot, menu_spec: dict, guild: discord.Guild | None) -> list["RoleButton"]:
     buttons: list[RoleButton] = []
-    style = discord.ButtonStyle.success if menu_spec.get("mode") == "accept" else discord.ButtonStyle.primary
-    role_specs = menu_spec.get("roles", [])
-    if len(role_specs) > MAX_MENU_ROLES:
-        log.warning(
-            'Menu "%s" has %d roles, only the first %d fit on one message.',
-            menu_spec["id"],
-            len(role_specs),
-            MAX_MENU_ROLES,
-        )
-    for role_spec in role_specs[:MAX_MENU_ROLES]:
+    for role_spec in menu_spec.get("roles", []):
         role = guild.get_role(int(role_spec["role_id"])) if guild else None
         if role is None or role.is_default() or role.managed:
             continue
@@ -90,7 +74,7 @@ def _build_buttons(bot: commands.Bot, menu_spec: dict, guild: discord.Guild | No
             holders = len(role.members)
             suffix = f" ({holders}/{limit})"
             label = f"{label[: 80 - len(suffix)]}{suffix}"
-        buttons.append(RoleButton(bot, menu_spec["id"], role.id, label, emoji, style))
+        buttons.append(RoleButton(bot, menu_spec["id"], role.id, label, emoji))
     return buttons
 
 
@@ -102,12 +86,11 @@ class RoleButton(discord.ui.Button):
         role_id: int,
         label: str,
         emoji: str | None = None,
-        style: discord.ButtonStyle = discord.ButtonStyle.primary,
     ) -> None:
         super().__init__(
             label=label or "Role",
             emoji=emoji,
-            style=style,
+            style=discord.ButtonStyle.primary,
             custom_id=f"role_menu:{menu_id}:{role_id}",
         )
         self.bot = bot
@@ -118,62 +101,49 @@ class RoleButton(discord.ui.Button):
         guild = interaction.guild
         member = interaction.user
         if guild is None or not isinstance(member, discord.Member):
-            await interaction.response.send_message(tr("de", "menu_server_only"), ephemeral=True)
+            await interaction.response.send_message("This menu only works inside a server.", ephemeral=True)
             return
-
-        guild_config = self.bot.guild_config(guild.id)
-        language = member_language(guild_config, member)
-
-        async def reply(key: str, **values) -> None:
-            text = resolve_links(guild, tr(language, key, **values))
-            await interaction.response.send_message(text, ephemeral=True)
 
         role = guild.get_role(self.role_id)
         if role is None:
-            await reply("role_gone")
+            await interaction.response.send_message("That role no longer exists.", ephemeral=True)
             return
         if role.is_default() or role.managed:
-            await reply("role_not_assignable")
+            await interaction.response.send_message("That role can't be given out.", ephemeral=True)
             return
 
         bot_member = guild.me
         if bot_member is None or role >= bot_member.top_role:
-            await reply("role_too_high")
+            await interaction.response.send_message(
+                "I can't manage that role because it is above my highest role.", ephemeral=True
+            )
             return
-
-        menu = self._menu(guild)
-        accept_mode = menu is not None and menu.get("mode") == "accept"
-        # The member's cached roles are not updated yet when the reply is sent.
-        is_language_role = str(role.id) == str(guild_config.get("international_role_id"))
 
         try:
             if role in member.roles:
-                if accept_mode:
-                    await reply("rules_already_accepted")
-                    return
                 await member.remove_roles(role, reason="Role menu")
-                key = "role_removed"
-                if is_language_role:
-                    language = "de"
+                text = f"Removed the **{role.name}** role."
             else:
                 limit = self._role_limit(guild)
                 if limit is not None:
                     holders = [m for m in role.members if isinstance(m, discord.Member)]
                     if len(holders) >= limit:
-                        await reply("role_full", role=role.name, limit=limit)
+                        await interaction.response.send_message(
+                            f"Sorry, the **{role.name}** role is limited to {limit} member(s) "
+                            "at once and it's full right now.",
+                            ephemeral=True,
+                        )
                         return
                 await member.add_roles(role, reason="Role menu")
-                key = "rules_accepted" if accept_mode else "role_added"
-                if is_language_role:
-                    language = "en"
+                text = f"You now have the **{role.name}** role."
         except discord.Forbidden:
-            await reply("no_permission")
+            await interaction.response.send_message("I don't have permission to change that role.", ephemeral=True)
             return
         except discord.HTTPException:
-            await reply("try_again")
+            await interaction.response.send_message("Something went wrong, please try again.", ephemeral=True)
             return
 
-        await reply(key, role=role.name)
+        await interaction.response.send_message(text, ephemeral=True)
 
     def _menu(self, guild: discord.Guild) -> dict | None:
         return next(

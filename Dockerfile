@@ -9,7 +9,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY bot.py config_store.py emoji_utils.py i18n.py provision.py config.json ./
+COPY bot.py config_store.py emoji_utils.py config.json ./
 COPY cogs ./cogs
 
 # Create the runtime user with a UID/GID that matches the host owner of the
